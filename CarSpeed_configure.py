@@ -1,7 +1,8 @@
-import subprocess
-import json
+from CarSpeedConfig import CarSpeedConfig
 import argparse
 import pathlib
+import subprocess
+
 # Determine is we are running in Raspbian
 process = subprocess.run(['cat','/etc/os-release'], capture_output=True, check=True, text=True)
 if 'Raspbian' in process.stdout:
@@ -11,57 +12,9 @@ else:
 
 # load a dummy ConfigureMonitorArea if testing this on non-raspbian OS
 if ( IsRaspbian):
-    from CarSpeed_configure_monitor_area import ConfigureMonitorArea
+    from CarSpeedConfigureMonitorArea import ConfigureMonitorArea
 else:
-    from _CarSpeed_configure_monitor_area import ConfigureMonitorArea
-
-class MonitorArea(object):
-    def __init__(self,data=None):
-        self.class_name = self.__class__.__name__
-        self.upper_left_x = 0
-        self.upper_left_y = 0
-        self.lower_right_x = 0
-        self.lower_right_y = 0
-        if data:
-            self.__dict__ = data
-
-class CarSpeedConfig(object):
-    def __init__(self,data=None):
-        self.class_name = self.__class__.__name__
-        self.l2r_distance = 47
-        self.r2l_distance = 37
-        self.min_speed_image = 0
-        self.min_speed_save = 10
-        self.max_speed_save = 80
-        self.field_of_view = 75 # 75 is standard pi camera module 3, 120 for wide angle
-        self.h_flip = False
-        self.v_flip = False
-        self.monitor_area = MonitorArea()
-        if  data:
-            self.__dict__ = data
-            
-
-    def toJson(self):
-        return json.dumps(self, default=lambda o: o.__dict__, indent=4)
-    @staticmethod
-    def fromJsonFile(file):
-        with open(configFile,"r") as f:
-            return json.load(f, object_hook=CarSpeedConfig._objectHook)
-    @staticmethod
-    def fromJsonStr(str):
-        return json.loads(str, object_hook=CarSpeedConfig._objectHook)
-        
-    @staticmethod
-    def _objectHook(dict):
-        print("ObjectHook")
-        print(dict)
-        if ( 'class_name' in dict):
-            class_name = dict['class_name']
-            if (class_name=='CarSpeedConfig'):                
-                return CarSpeedConfig(dict)
-            elif (class_name=='MonitorArea'):            
-                return MonitorArea(dict)
-
+    from _CarSpeedConfigureMonitorArea import ConfigureMonitorArea
 
 def configure_monitor_area():
     print('configure area')
@@ -70,7 +23,7 @@ def configure_monitor_area():
     config.monitor_area = cma.area
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--file","-f", default="CarSpeed.json", help="Filename to store config")
+ap.add_argument("--file","-f", default=CarSpeedConfig.DEF_CONFIG_FILE, help="Filename to store config")
 args = vars(ap.parse_args())
 
 configFile = args["file"]
