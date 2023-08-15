@@ -18,7 +18,7 @@ else:
 
 def configure_monitor_area():
     print('configure area')
-    cma = ConfigureMonitorArea()
+    cma = ConfigureMonitorArea(h_flip=config.h_flip,v_flip=config.v_flip)
     cma.start()
     config.monitor_area = cma.area
 
@@ -31,7 +31,6 @@ configPath = pathlib.Path(configFile)
 if ( configPath.exists()):
     print(f"Loading config from  [{configFile}]")
     config = CarSpeedConfig.fromJsonFile(configFile)
-    print(config)
 else:
     print(f"Creating config file [{configFile}]")
     config = CarSpeedConfig()
@@ -60,8 +59,6 @@ config.min_speed_image = inputFloat(f"Min speed for image save (mph)",config.min
 config.min_speed_save = inputFloat(f"Min speed to report (mph)",config.min_speed_save)
 config.max_speed_save = inputFloat(f"Max speed to report (mph)",config.max_speed_save)
 config.field_of_view = inputFloat(f"Camera's field of view (deg)",config.field_of_view)
-config.h_flip = inputBool(f"Flip image horizontally?",config.h_flip)
-config.v_flip = inputBool(f"Flip image vertically?",config.v_flip)
 a = config.monitor_area
 value = inputBool(f"Update monitor area?",f"({a.upper_left_x},{a.upper_left_y}),({a.lower_right_x},{a.lower_right_y})")
 if value:

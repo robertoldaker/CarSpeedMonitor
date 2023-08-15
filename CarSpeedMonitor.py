@@ -11,6 +11,7 @@ import numpy as np
 import json
 import os
 from pathlib import Path
+from pprint import *
 
 class DetectionResult(object):
     def __init__(self,cap_time,mean_speed,direction,counter,sd):
@@ -132,10 +133,10 @@ class CarSpeedMonitor(object):
             jsonStr = data.toJson();
             print(f'CAR_DETECTED:{jsonStr}')
 
-        def process_image(image):
+        def process_image():
             nonlocal base_image, initial_x, initial_w, initial_time, last_x, state, abs_chg, mph, text_on_image, secs, t1, t2
             nonlocal lightlevel, last_lightlevel, adjusted_threshold, adjusted_min_area, adjusted_save_buffer, counter, speeds, cap_time
-            nonlocal direction
+            nonlocal direction, mean_speed, image
 
             # crop area defined by [y1:y2,x1:x2]
             gray = image[upper_left_y:lower_right_y,upper_left_x:lower_right_x]
@@ -274,7 +275,6 @@ class CarSpeedMonitor(object):
                             print("numpy mean= " + "%.0f" % mean_speed)   
                             print("numpy SD = " + "%.0f" % sd)
 
-                            #Captime used for mqtt, csv, image filename. 
                             cap_time = datetime.datetime.now()   
 
                             # save the image but only if there is light and above the min speed for images 
@@ -402,20 +402,10 @@ class CarSpeedMonitor(object):
 
         # initialize the camera. Adjust vflip and hflip to reflect your camera's orientation
         image_width=1024
+        image_height=592
         camera = Picamera2()
-        config = camera.create_still_configuration({"format": "RGB888"},transform = Transform(hflip=h_flip,vflip=v_flip))
-        mainConfig = config['main']
-        (width,height)=mainConfig['size']
-        # if > than nominal image_width shrink down keep aspect ratio the same
-        if width>image_width:
-            image_height = image_width*(height/width)
-            mainConfig['size']=(int(image_width),int(image_height))
-            # this optimizes the size
-            camera.align_configuration(config)        
-            (image_width,image_height)=config['main']['size']
-        else:
-            image_width = width
-            image_height = height
+
+        config = camera.create_still_configuration({"size": (image_width,image_height),"format": "RGB888"},transform = Transform(hflip=h_flip,vflip=v_flip))
         #
         camera.configure(config)
         # allow the camera to warm up
@@ -492,14 +482,21 @@ class CarSpeedMonitor(object):
         print(" monitored_area {}".format(monitored_width * monitored_height))
 
         while True:
+            st = time.time()
             # grab the raw NumPy array representing the image 
             image = camera.capture_array()
-            process_image(image)
+            lap1=time.time()
+            process_image()
+            lap2=time.time()
             if state == DetectionState.WAITING:
                 key = cv2.waitKey(1) & 0xFF
                 # if the `q` key is pressed, break from the loop and terminate processing
                 if key == ord("q"):
-                    break;    
+                    break; 
+            #
+            ft = time.time()
+            #print(f'Loop capture_array=[{lap1-st:.3f}] process_image=[{lap2-lap1:.3f}] [{ft-lap2:.3f}]')
+            #time.sleep(0.5)
         
         # cleanup the camera and close any open windows
         cv2.destroyAllWindows()

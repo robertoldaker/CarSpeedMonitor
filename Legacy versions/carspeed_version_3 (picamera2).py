@@ -269,9 +269,12 @@ print(" monitored_area {}".format(monitored_width * monitored_height))
 #   This keeps the picamera in capture mode - it doesn't need
 #   to prep for each frame's capture.
 #for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
+
 while True:
+    st = time.time()
     # grab the raw NumPy array representing the image 
     image = camera.capture_array()
+    lap1=time.time()
 
     # crop area defined by [y1:y2,x1:x2]
     gray = image[upper_left_y:lower_right_y,upper_left_x:lower_right_x]
@@ -505,8 +508,8 @@ while True:
                     base_image = None
                 last_lightlevel = lightlevel
         state=WAITING
-        key = cv2.waitKey(1) & 0xFF
-      
+        lap2=time.time()
+        key = cv2.waitKey(1) & 0xFF      
         # if the `q` key is pressed, break from the loop and terminate processing
         if key == ord("q"):
             #client.loop_stop()
@@ -515,7 +518,9 @@ while True:
     # clear the stream in preparation for the next frame
     #rawCapture.truncate(0)
     # sleep to allow cpu to recover
-    time.sleep(0.033)
+    #time.sleep(0.033)
+    ft = time.time()
+    print(f'Loop capture_array=[{lap1-st:.3f}] process_image=[{lap2-lap1:.3f}] [{ft-st:.3f}]')
 
 # cleanup the camera and close any open windows
 cv2.destroyAllWindows()
