@@ -9,11 +9,13 @@ import datetime
 import cv2
 import numpy as np
 import json
+import os
+from pathlib import Path
 
 class DetectionResult(object):
     def __init__(self,cap_time,mean_speed,direction,counter,sd):
         # need this to get it to serialize to json
-        self.cap_time = time.mktime(cap_time.timetuple())
+        self.posix_time = time.mktime(cap_time.timetuple())
         self.mean_speed = mean_speed
         self.direction = direction
         self.counter = counter
@@ -23,7 +25,7 @@ class DetectionResult(object):
         return json.dumps(self, default=lambda o: o.__dict__, indent=4)    
 
 
-class CarSpeedProcessor(object):
+class CarSpeedMonitor(object):
     
     def __init__(self, config) -> None:
         if config is None:
@@ -95,6 +97,8 @@ class CarSpeedProcessor(object):
         def store_image():
             # timestamp the image - 
             nonlocal cap_time, image, mean_speed
+
+            # add text to image
             cv2.putText(image, cap_time.strftime("%A %d %B %Y %I:%M:%S%p"),
             (10, image.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 1)
             # write the speed: first get the size of the text
@@ -103,8 +107,13 @@ class CarSpeedProcessor(object):
             cntr_x = int((image_width - size[0]) / 2) 
             cv2.putText(image, "%.0f mph" % mean_speed,
             (cntr_x , int(image_height * 0.2)), cv2.FONT_HERSHEY_SIMPLEX, 2.00, (0, 255, 0), 3)
+
             # and save the image to disk
-            imageFilename = "car_at_" + cap_time.strftime("%Y%m%d_%H%M%S") + ".jpg"
+            folder = f'images/{cap_time.year:04}-{cap_time.month:02}-{cap_time.day:02}'
+            folderPath = Path(folder)
+            if not folderPath.is_dir():
+                os.makedirs(folder)                
+            imageFilename = folder + "/car_at_" + cap_time.strftime("%Y-%m-%d_%H-%M-%S") + ".jpg"
             cv2.imwrite(imageFilename,image)
 
         # place a prompt on the displayed image
@@ -115,9 +124,6 @@ class CarSpeedProcessor(object):
 
         def raise_detection_result(data):
 
-            #csvString=(cap_time.strftime("%Y-%m-%d") + ' ' +\
-            #cap_time.strftime('%H:%M:%S:%f')+','+("%.0f" % mean_speed) + ',' +\
-            #("%d" % direction) + ',' + ("%d" % counter) + ','+ ("%d" % sd))
             # raise event if hook set
             if detection_hook:
                 detection_hook(data)

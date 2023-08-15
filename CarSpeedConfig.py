@@ -47,8 +47,6 @@ class CarSpeedConfig(object):
         
     @staticmethod
     def _objectHook(dict):
-        print("ObjectHook")
-        print(dict)
         if ( 'class_name' in dict):
             class_name = dict['class_name']
             if (class_name=='CarSpeedConfig'):                
