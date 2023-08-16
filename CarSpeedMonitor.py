@@ -401,11 +401,14 @@ class CarSpeedMonitor(object):
         max_speed_save = self.config.max_speed_save
 
         # initialize the camera. Adjust vflip and hflip to reflect your camera's orientation
-        image_width=1024
-        image_height=592
+        #image_width=1024
+        #image_height=576
+        image_width=640
+        image_height=380
         camera = Picamera2()
 
-        config = camera.create_still_configuration({"size": (image_width,image_height),"format": "RGB888"},transform = Transform(hflip=h_flip,vflip=v_flip))
+        config = camera.create_preview_configuration(main={"size": (image_width, image_height)},transform = Transform(hflip=h_flip,vflip=v_flip),raw=camera.sensor_modes[1])
+        #config = camera.create_still_configuration({"size": (image_width,image_height),"format": "RGB888"},transform = Transform(hflip=h_flip,vflip=v_flip))
         #
         camera.configure(config)
         # allow the camera to warm up
@@ -484,7 +487,7 @@ class CarSpeedMonitor(object):
         while True:
             st = time.time()
             # grab the raw NumPy array representing the image 
-            image = camera.capture_array()
+            image = camera.capture_array('main')
             lap1=time.time()
             process_image()
             lap2=time.time()

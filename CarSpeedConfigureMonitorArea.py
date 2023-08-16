@@ -71,23 +71,12 @@ class ConfigureMonitorArea(object):
             camera.start()
             refresh_image()
 
-        image_width=1024
+        image_width=640
+        image_height=380
         # initialize the camera. Adjust vflip and hflip to reflect your camera's orientation
         camera = Picamera2()
-        config = camera.create_still_configuration({"format": "RGB888"},transform = Transform(hflip=self.h_flip,vflip=self.v_flip))
-        mainConfig = config['main']
-        (width,height)=mainConfig['size']
-        # if > than nominal image_width shrink down keep aspect ratio the same
-        if width>image_width:
-            image_height = image_width*(height/width)
-            mainConfig['size']=(int(image_width),int(image_height))
-            # this optimizes the size
-            camera.align_configuration(config)        
-            (image_width,image_height)=config['main']['size']
-        else:
-            image_width = width
-            image_height = height
         #
+        config = camera.create_preview_configuration(main={"size": (image_width, image_height)},transform = Transform(hflip=self.h_flip,vflip=self.v_flip),raw=camera.sensor_modes[1])
         camera.configure(config)
         camera.start()
 
