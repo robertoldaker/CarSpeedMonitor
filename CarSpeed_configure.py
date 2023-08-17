@@ -19,8 +19,10 @@ else:
 def configure_monitor_area():
     print('configure area')
     cma = ConfigureMonitorArea(h_flip=config.h_flip,v_flip=config.v_flip)
-    cma.start()
-    config.monitor_area = cma.area
+    if cma.start():
+        config.h_flip = cma.h_flip
+        config.v_flip = cma.v_flip
+        config.monitor_area = cma.area
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--file","-f", default=CarSpeedConfig.DEF_CONFIG_FILE, help="Filename to store config")

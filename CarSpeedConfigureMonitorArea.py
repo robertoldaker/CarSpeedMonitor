@@ -1,4 +1,5 @@
 from CarSpeedConfig import MonitorArea
+from CarSpeedMonitor import CarSpeedCamera
 from picamera2 import Picamera2
 from libcamera import Transform
 import cv2
@@ -22,14 +23,16 @@ class ConfigureMonitorArea(object):
         org_image: None
 
         def update_prompt(image):
-            txt = f"Define the monitored area - press 'q' to quit, 'e' to exit and save configution, 'r' to refresh image"
+            txt = f"Press 'q' to quit, 'e' to exit and save configution, 'r' to refresh image"
+            cv2.putText(image, txt, (10, 15),cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            txt = f"Press 'h' to flip horizontal, 'v' to flip vertical"
             cv2.putText(image, txt, (10, 35),cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
             txt = f"h_flip=[{self.h_flip}], v_flip=[{self.v_flip}]"
             cv2.putText(image, txt, (10, 55),cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
         
         def refresh_image():
             nonlocal image,org_image
-            image = camera.capture_array("main")
+            image = camera.picam.capture_array("main")
             update_prompt(image)
             org_image = image.copy()
         
@@ -52,32 +55,18 @@ class ConfigureMonitorArea(object):
                 cv2.rectangle(image,(ix,iy),(fx,fy),(0,255,0),2)    
         
         def toggle_h_flip():
-            nonlocal config, camera, image, org_image
+            nonlocal camera
             self.h_flip = not self.h_flip
-            config['transform'].hflip = self.h_flip
-            print(config['transform'])
-            camera.stop()
-            camera.configure(config)
-            camera.start()
+            camera.update_h_flip(self.h_flip)
             refresh_image()
 
         def toggle_v_flip():
-            nonlocal config, camera, image, org_image
+            nonlocal camera
             self.v_flip = not self.v_flip
-            config['transform'].vflip = self.v_flip
-            print(config['transform'])
-            camera.stop()
-            camera.configure(config)
-            camera.start()
+            camera.update_v_flip(self.v_flip)
             refresh_image()
 
-        image_width=640
-        image_height=380
-        # initialize the camera. Adjust vflip and hflip to reflect your camera's orientation
-        camera = Picamera2()
-        #
-        config = camera.create_preview_configuration(main={"size": (image_width, image_height)},transform = Transform(hflip=self.h_flip,vflip=self.v_flip),raw=camera.sensor_modes[1])
-        camera.configure(config)
+        camera = CarSpeedCamera(self.h_flip, self.v_flip)
         camera.start()
 
         # allow the camera to warm up

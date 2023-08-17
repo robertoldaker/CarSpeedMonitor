@@ -26,6 +26,37 @@ class DetectionResult(object):
         return json.dumps(self, default=lambda o: o.__dict__, indent=4)    
 
 
+class CarSpeedCamera(object):
+    def __init__(self,h_flip,v_flip):
+        # same aspect ratio as sensor but heavily reduced for speed of processing
+        self.image_width=640
+        self.image_height=380
+        self.h_flip = h_flip
+        self.v_flip = v_flip
+        self.picam = Picamera2()
+        # sensor_mode[1] is the full-frame fast frame rate camera of the pi camera 3
+        self.config = self.picam.create_preview_configuration(main={"size": (self.image_width, self.image_height),"format": "RGB888"},
+                                                              transform = Transform(hflip=self.h_flip,vflip=self.v_flip),
+                                                              queue=False,
+                                                              raw=self.picam.sensor_modes[1])
+        #
+        self.picam.configure(self.config)
+
+    def start(self):
+        self.picam.start()
+
+    def update_h_flip(self, h_flip):
+        self.h_flip = self.config['transform'].hflip = h_flip
+        self.picam.stop()
+        self.picam.configure(self.config)
+        self.picam.start()
+
+    def update_v_flip(self, v_flip):
+        self.v_flip = self.config['transform'].vflip = v_flip
+        self.picam.stop()
+        self.picam.configure(self.config)
+        self.picam.start()
+        
 class CarSpeedMonitor(object):
     
     def __init__(self, config) -> None:
@@ -35,10 +66,7 @@ class CarSpeedMonitor(object):
             raise Exception(f'First parameter should be of type [{CarSpeedConfig.__class__.__name__}]')        
         self.config = config
     
-    def initialise():
-        pass    
-
-    def start(self, detection_hook):
+    def start(self, detection_hook, show_preview=False):
 
         def my_map(x, in_min, in_max, out_min, out_max):
             return int((x-in_min) * (out_max-out_min) / (in_max-in_min) + out_min)
@@ -149,7 +177,8 @@ class CarSpeedMonitor(object):
             # if the base image has not been defined, initialize it
             if base_image is None:
                 base_image = gray.copy().astype("float")
-                cv2.imshow("Speed Camera", image)
+                if SHOW_IMAGE:
+                    cv2.imshow("Speed Camera", image)
         
 
             if lightlevel == 0:   #First pass through only
@@ -379,7 +408,7 @@ class CarSpeedMonitor(object):
         MIN_AREA = 175
         BLURSIZE = (15,15)
         SHOW_BOUNDS = True
-        SHOW_IMAGE = True
+        SHOW_IMAGE = show_preview
 
         TOO_CLOSE = 0.4
         MIN_SAVE_BUFFER = 2
@@ -394,24 +423,15 @@ class CarSpeedMonitor(object):
         fov = self.config.field_of_view
         l2r_distance = self.config.l2r_distance
         r2l_distance = self.config.l2r_distance
-        h_flip = self.config.h_flip
-        v_flip = self.config.v_flip
         min_speed_image = self.config.min_speed_image
         min_speed_save = self.config.min_speed_save
         max_speed_save = self.config.max_speed_save
 
         # initialize the camera. Adjust vflip and hflip to reflect your camera's orientation
-        #image_width=1024
-        #image_height=576
-        image_width=640
-        image_height=380
-        camera = Picamera2()
-
-        config = camera.create_preview_configuration(main={"size": (image_width, image_height)},transform = Transform(hflip=h_flip,vflip=v_flip),raw=camera.sensor_modes[1])
-        #config = camera.create_still_configuration({"size": (image_width,image_height),"format": "RGB888"},transform = Transform(hflip=h_flip,vflip=v_flip))
-        #
-        camera.configure(config)
         # allow the camera to warm up
+        camera = CarSpeedCamera(self.config.h_flip,self.config.v_flip)
+        image_width = camera.image_width
+        image_height = camera.image_height
         camera.start()
         time.sleep(0.9)
 
@@ -469,8 +489,9 @@ class CarSpeedMonitor(object):
         sd = 0.0
 
         # create an image window and place it in the upper left corner of the screen
-        cv2.namedWindow("Speed Camera")
-        cv2.moveWindow("Speed Camera", 10, 40)
+        if SHOW_IMAGE:
+            cv2.namedWindow("Speed Camera")
+            cv2.moveWindow("Speed Camera", 10, 40)
                     
         monitored_width = lower_right_x - upper_left_x
         monitored_height = lower_right_y - upper_left_y
@@ -487,7 +508,7 @@ class CarSpeedMonitor(object):
         while True:
             st = time.time()
             # grab the raw NumPy array representing the image 
-            image = camera.capture_array('main')
+            image = camera.picam.capture_array('main')
             lap1=time.time()
             process_image()
             lap2=time.time()

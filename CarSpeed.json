@@ -1,17 +1,18 @@
 {
     "class_name": "CarSpeedConfig",
-    "l2r_distance": 47.0,
-    "r2l_distance": 48.0,
-    "min_speed_image": 49.0,
-    "min_speed_save": 50.0,
-    "max_speed_save": 51.0,
-    "field_of_view": 52.0,
+    "l2r_distance": 25,
+    "r2l_distance": 17,
+    "min_speed_image": 10.0,
+    "min_speed_save": 10.0,
+    "max_speed_save": 80.0,
+    "field_of_view": 75.0,
     "h_flip": false,
     "v_flip": false,
     "monitor_area": {
-        "upper_left_x": 1,
-        "upper_left_y": 2,
-        "lower_right_x": 3,
-        "lower_right_y": 4
+        "class_name": "MonitorArea",
+        "upper_left_x": 50,
+        "upper_left_y": 50,
+        "lower_right_x": 500,
+        "lower_right_y": 300
     }
 }

@@ -4,6 +4,7 @@ from datetime import date
 from datetime import datetime
 from pathlib import Path
 import os
+import argparse
 
 def car_detected(data):
     cap_time = datetime.fromtimestamp(data.posix_time)
@@ -13,7 +14,14 @@ def car_detected(data):
     with open(csv_filename, 'a') as f:
         f.write(csv_str+"\n")
 
-print('CarSpeed monitor')
+
+ap = argparse.ArgumentParser(description="Monitors car speed using raspberry pi camera")
+ap.add_argument("--file","-f", default=CarSpeedConfig.DEF_CONFIG_FILE, help="Filename to store config")
+ap.add_argument("--preview","-p", action='store_true', help="Create preview window")
+args = vars(ap.parse_args())
+
+show_preview = args["preview"]
+
 # create csv file if not exist
 today = date.today()
 folder="csv"
@@ -32,5 +40,5 @@ if not csv_path.exists():
 config = CarSpeedConfig.fromDefJsonFile()
 # start the monitor
 proc = CarSpeedMonitor(config)
-proc.start(detection_hook=car_detected)
+proc.start(detection_hook=car_detected,show_preview=show_preview)
 
