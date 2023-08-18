@@ -14,17 +14,29 @@ from pathlib import Path
 from pprint import *
 
 class DetectionResult(object):
-    def __init__(self,cap_time,mean_speed,direction,counter,sd):
+    def __init__(self,cap_time,mean_speed,direction,counter,sd,tracking_data):
         # need this to get it to serialize to json
         self.posix_time = time.mktime(cap_time.timetuple())
         self.mean_speed = mean_speed
         self.direction = direction
         self.counter = counter
         self.sd = sd
+        self.tracking_data=tracking_data
     
     def toJson(self):
         return json.dumps(self, default=lambda o: o.__dict__, indent=4)    
 
+class TrackingData(object):
+    def __init__(self,abs_chg,secs,mph,x,biggest_area,direction):
+        self.abs_chg = abs_chg
+        self.secs = secs
+        self.mph = mph
+        self.x = x
+        self.biggest_area = biggest_area
+        self.direction = direction
+    
+    def toJson(self):
+        return json.dumps(self, default=lambda o: o.__dict__, indent=4)    
 
 class CarSpeedCamera(object):
     def __init__(self,h_flip,v_flip):
@@ -123,7 +135,7 @@ class CarSpeedMonitor(object):
             else:
                 return 0.0
         
-        def store_image():
+        def store_image(data):
             # timestamp the image - 
             nonlocal cap_time, image, mean_speed
 
@@ -143,7 +155,12 @@ class CarSpeedMonitor(object):
             if not folderPath.is_dir():
                 os.makedirs(folder)                
             imageFilename = folder + "/car_at_" + cap_time.strftime("%Y-%m-%d_%H-%M-%S") + ".jpg"
+            jsonFilename=folder + "/car_at_" + cap_time.strftime("%Y-%m-%d_%H-%M-%S") + ".json"
+
             cv2.imwrite(imageFilename,image)
+            # write out json to config file
+            with open(jsonFilename, 'w') as f:
+                f.write(data.toJson())
 
         # place a prompt on the displayed image
         def prompt_on_image(txt):
@@ -158,13 +175,13 @@ class CarSpeedMonitor(object):
                 detection_hook(data)
 
             # print json version to std out
-            jsonStr = data.toJson();
-            print(f'CAR_DETECTED:{jsonStr}')
+            #jsonStr = data.toJson()
+            print(f'CAR_DETECTED: ({data.mean_speed:.1f} mph) (sd={data.sd:.2f})')
 
         def process_image():
             nonlocal base_image, initial_x, initial_w, initial_time, last_x, state, abs_chg, mph, text_on_image, secs, t1, t2
             nonlocal lightlevel, last_lightlevel, adjusted_threshold, adjusted_min_area, adjusted_save_buffer, counter, speeds, cap_time
-            nonlocal direction, mean_speed, image
+            nonlocal direction, mean_speed, image, frame_timestamp, raw_tracking_data
 
             # crop area defined by [y1:y2,x1:x2]
             gray = image[upper_left_y:lower_right_y,upper_left_x:lower_right_x]
@@ -217,12 +234,14 @@ class CarSpeedMonitor(object):
                     y = y1
                     w = w1
                     #record the timestamp at the point in code where motion found
-                    timestamp = datetime.datetime.now()
+                    #timestamp = datetime.datetime.now()
+                    timestamp = frame_timestamp
 
             if motion_found:
                 if state == DetectionState.WAITING:
                     # intialize tracking
                     state = DetectionState.TRACKING
+                    raw_tracking_data=[]
                     initial_x = x
                     last_x = x
                     #if initial capture straddles start line then the
@@ -283,6 +302,7 @@ class CarSpeedMonitor(object):
                                 x=monitored_width + MIN_SAVE_BUFFER  #Force save
                         else:
                             print(f"{abs_chg:4d}  {secs:7.2f}  {mph:7.0f}   {x:4d}  {w:4d} {biggest_area:6d} {int(direction):4d} {counter:5d} {timestamp:%H:%M:%S.%f}")
+                            raw_tracking_data.append(TrackingData(abs_chg=abs_chg,secs=secs,mph=mph,x=x,biggest_area=biggest_area,direction=direction))
                         
                         # is front of object outside the monitired boundary? Then write date, time and speed on image
                         # and save it 
@@ -301,23 +321,20 @@ class CarSpeedMonitor(object):
                                 mean_speed = 0 #ignore it 
                                 sd = 0
                             
-                            print("numpy mean= " + "%.0f" % mean_speed)   
-                            print("numpy SD = " + "%.0f" % sd)
-
-                            cap_time = datetime.datetime.now()   
+                            #cap_time = datetime.datetime.now()   
+                            cap_time = frame_timestamp
 
                             # save the image but only if there is light and above the min speed for images 
+                            data = DetectionResult(cap_time = cap_time, mean_speed = mean_speed, direction = direction, counter = counter, sd = sd, tracking_data=raw_tracking_data)
                             if (mean_speed > min_speed_image) and (lightlevel > 1) :    
-                                store_image()
+                                store_image(data)
                             
                             # save the data if required and above min speed for data
                             if mean_speed > min_speed_save and mean_speed < max_speed_save:
-                                data = DetectionResult(cap_time = cap_time, mean_speed = mean_speed, direction = direction, counter = counter, sd = sd)
                                 raise_detection_result(data)
                             
                             counter = 0
                             state = DetectionState.SAVING
-                            print("saving")  #debug                    
                         # if the object hasn't reached the end of the monitored area, just remember the speed 
                         # and its last position
                         last_mph = mph
@@ -338,20 +355,19 @@ class CarSpeedMonitor(object):
                         mean_speed = 0 #ignore it 
                         sd = 0
                             
-                    print("numpy mean= " + "%.0f" % mean_speed)   
-                    print("numpy SD = " + "%.0f" % sd)
+                    #cap_time = datetime.datetime.now()
+                    cap_time = frame_timestamp
 
-                    cap_time = datetime.datetime.now()
+                    data = DetectionResult(cap_time = cap_time, mean_speed = mean_speed, direction = direction, counter = counter, sd = sd, tracking_data=raw_tracking_data)
                     if (mean_speed > min_speed_image) and (lightlevel > 1) :    
-                        store_image()
+                        store_image(data)
                     if mean_speed > min_speed_save:
-                        data = DetectionResult(cap_time = cap_time, mean_speed = mean_speed, direction = direction, counter = counter, sd = sd)
                         raise_detection_result(data)
 
                 if state != DetectionState.WAITING:
                     state = DetectionState.WAITING
                     direction = DetectionDirection.UNKNOWN
-                    text_on_image = 'No Car Detected'
+                    text_on_image = 'Waiting'
                     counter = 0
                     print(text_on_image)
                     
@@ -360,7 +376,7 @@ class CarSpeedMonitor(object):
             if (state == DetectionState.WAITING):    
         
                 # draw the text and timestamp on the frame
-                cv2.putText(image, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"),
+                cv2.putText(image, frame_timestamp.strftime("%A %d %B %Y %I:%M:%S%p"),
                     (10, image.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 1)
                 cv2.putText(image, "Road Status: {}".format(text_on_image), (10, 20),
                     cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
@@ -461,6 +477,7 @@ class CarSpeedMonitor(object):
         
         #Initialisation
         state = DetectionState.WAITING
+        raw_tracking_data=[]
         direction = DetectionDirection.UNKNOWN
         initial_x = 0
         last_x = 0
@@ -505,6 +522,12 @@ class CarSpeedMonitor(object):
         print(" monitored_height {}".format(monitored_height))
         print(" monitored_area {}".format(monitored_width * monitored_height))
 
+        frame_timestamp=datetime.datetime.now()
+        def pre_capture_callback(request):
+            nonlocal frame_timestamp
+            frame_timestamp = datetime.datetime.now()
+        
+        camera.picam.pre_callback = pre_capture_callback
         while True:
             st = time.time()
             # grab the raw NumPy array representing the image 
