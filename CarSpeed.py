@@ -1,4 +1,4 @@
-from CarSpeedMonitor import CarSpeedMonitor
+from CarSpeedMonitor import CarSpeedMonitor, DetectionResult
 from CarSpeedConfig import CarSpeedConfig
 from datetime import date
 from datetime import datetime
@@ -6,11 +6,12 @@ from pathlib import Path
 import os
 import argparse
 
-def car_detected(data):
+def car_detected(data: DetectionResult):
     cap_time = datetime.fromtimestamp(data.posix_time)
+    count = len(data.tracking_data)
     csv_str=(cap_time.strftime("%Y-%m-%d") + ' ' +\
                 cap_time.strftime('%H:%M:%S:%f')+','+("%.0f" % data.mean_speed) + ',' +\
-    ("%d" % int(data.direction)) + ',' + ("%d" % data.counter) + ','+ ("%d" % data.sd))
+    ("%d" % int(data.direction)) + ',' + ("%d" % count) + ','+ ("%d" % data.sd))
     with open(csv_filename, 'a') as f:
         f.write(csv_str+"\n")
 
@@ -39,6 +40,7 @@ if not csv_path.exists():
 # open config
 config = CarSpeedConfig.fromDefJsonFile()
 # start the monitor
-proc = CarSpeedMonitor(config)
-proc.start(detection_hook=car_detected,show_preview=show_preview)
+if config!=None:
+    proc = CarSpeedMonitor(config)
+    proc.start(detection_hook=car_detected,show_preview=show_preview)
 

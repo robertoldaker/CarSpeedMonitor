@@ -1,4 +1,4 @@
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Union
 from CarSpeedConfig import CarSpeedConfig
 # import the necessary packages
 from picamera2 import Picamera2
@@ -17,6 +17,8 @@ from pathlib import Path
 class DetectionState(IntEnum):
     WAITING=0
     TRACKING=1
+    SAVING=2
+
 
 # Current detection direction
 class DetectionDirection(IntEnum):
@@ -37,12 +39,13 @@ class TrackingData(object):
         return json.dumps(self, default=lambda o: o.__dict__, indent=4)   
 
 class DetectionResult(object):
-    def __init__(self,cap_time: datetime.datetime, mean_speed: float,direction: DetectionDirection,sd: float,tracking_data: List[TrackingData]):
+    def __init__(self,cap_time: datetime.datetime, mean_speed: float,direction: DetectionDirection,sd: float,inExitZone: bool, tracking_data: List[TrackingData]):
         # need this to get it to serialize to json
         self.posix_time = time.mktime(cap_time.timetuple())
         self.mean_speed = mean_speed
         self.direction = direction
         self.sd = sd
+        self.inExitZone=inExitZone
         self.tracking_data=tracking_data
     
     def toJson(self)->str:
@@ -58,23 +61,20 @@ class ObjectDetector(object):
     MIN_SAVE_BUFFER = 2
 
     def __init__(self)->None:
-        self._base_image = []
-        self._lightlevel=0
+        self._base_image = None
+        self._lightlevel=-1
         self._last_lightlevel=0
         self._adjusted_min_area=0
         self._adjusted_threshold=0
         self._adjusted_savebuffer=0
-        
-    
-    def update_base_image(self,image)->None:
-        # convert the frame to grayscale, and blur it
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, ObjectDetector.BLURSIZE, 0)
-    
+        self._lightlevel_time:Union[None,datetime.datetime]=None
+            
+    def update_base_image(self,gray)->None:
+        print("updating base_image")
         # if the base image has not been defined, initialize it
         self._base_image = gray.copy().astype("float")    
 
-    def update_lightlevel(self,image)->None:
+    def update_lightlevel(self,image,gray)->None:
         def get_save_buffer(light: float):
             save_buffer = int((100/(light - 0.5)) + ObjectDetector.MIN_SAVE_BUFFER)    
             print(" save buffer " + str(save_buffer))
@@ -127,8 +127,13 @@ class ObjectDetector(object):
         self._adjusted_min_area = get_min_area(self._lightlevel)
         self._adjusted_threshold = get_threshold(self._lightlevel)
         self._adjusted_save_buffer = get_save_buffer(self._lightlevel)
+        self._lightlevel_time=datetime.datetime.now()
         if ( self._last_lightlevel!=self._lightlevel):
-            self.update_base_image(image)
+            self.update_base_image(gray)
+
+    def reset(self):
+        self._lightlevel=-1
+        
 
     def detectObject(self,image)->Tuple[bool,Tuple[int,int,int,int]]:                 
         # convert the frame to grayscale, and blur it
@@ -136,11 +141,11 @@ class ObjectDetector(object):
         gray = cv2.GaussianBlur(gray, ObjectDetector.BLURSIZE, 0)
     
         # if the base image has not been defined, initialize it
-        if self._base_image is None:
-            self._base_image = gray.copy().astype("float")    
+        #if self._base_image is None:
+        #    self.update_base_image(image)
 
-        if self._lightlevel == 0:   #First pass through only
-            self.update_lightlevel(image)
+        if self._lightlevel == -1:   #First pass through only
+            self.update_lightlevel(image,gray)
 
         # compute the absolute difference between the current image and
         # base image and then turn eveything lighter gray than THRESHOLD into
@@ -168,8 +173,11 @@ class ObjectDetector(object):
                 biggest_area = found_area
                 found_object = True
         #
-        if found_object:
-            cv2.accumulateWeighted(gray, self._base_image, 0.25)
+        if not found_object:
+            #cv2.accumulateWeighted(gray, self._base_image, 0.25)
+            # update light level every 60secs assuming no car detected
+            if not self._lightlevel_time is None and (datetime.datetime.now()-self._lightlevel_time).total_seconds() > 60:
+                self.update_lightlevel(image,gray)
         #            
         return (found_object,rect)
 
@@ -208,7 +216,7 @@ class CarSpeedCamera(object):
 class ObjectTracking(object):
 
     TOO_CLOSE=0.4
-
+    DETECTION_STATE_TEXT={ DetectionState.WAITING: 'WAITING', DetectionState.TRACKING: 'TRACKING', DetectionState.SAVING: 'SAVING'}
     def __init__(self,config: CarSpeedConfig,image_width: int,object_detector: ObjectDetector,moving_object_detected: Callable[[DetectionResult],None])->None:
         #
         self.state = DetectionState.WAITING
@@ -220,7 +228,7 @@ class ObjectTracking(object):
         self._initial_x=0
         self._initial_w=0
         self._initial_time:datetime.datetime
-        self._cap_time:datetime.datetime
+        self._cap_time:Union[datetime.datetime,None] = None
         self._last_x=0
         self._counter=0
         self._moving_object_detected=moving_object_detected
@@ -266,24 +274,26 @@ class ObjectTracking(object):
         self.speeds = np.array([])
         self.sd=0  #Initialise standard deviation
         
-        text_on_image = 'Tracking'
         self._counter = 0   # use to test later if saving with too few data points    
-        car_gap = ObjectTracking.secs_diff(self._initial_time, self._cap_time) 
-        print("initial time = "+str(self._initial_time) + " " + "cap_time =" + str(self._cap_time) + " gap= " +\
-            str(car_gap) + " initial x= " + str(self._initial_x) + " initial_w= " + str(self._initial_w))
-        print(text_on_image)
         print("x-chg    Secs      MPH  x-pos width     BA  DIR Count time")
-        # if gap between cars too low then probably seeing tail lights of current car
-        #but I might need to tweek this if find I'm not catching fast cars
-        if (car_gap<ObjectTracking.TOO_CLOSE):   
-            self.state = DetectionState.WAITING
-            print("too close")
+        if not self._cap_time == None:
+            car_gap = ObjectTracking.secs_diff(self._initial_time, self._cap_time) 
+            print("initial time = "+str(self._initial_time) + " " + "cap_time =" + str(self._cap_time) + " gap= " +\
+                str(car_gap) + " initial x= " + str(self._initial_x) + " initial_w= " + str(self._initial_w))
+            # if gap between cars too low then probably seeing tail lights of current car
+            #but I might need to tweek this if find I'm not catching fast cars
+            if (car_gap<ObjectTracking.TOO_CLOSE):   
+                self.state = DetectionState.WAITING
+                print("too close")
 
     def update_tracking(self,rect:Tuple[int,int,int,int],frame_timestamp:datetime.datetime)->None:
         # compute the elapsed time
         secs = ObjectTracking.secs_diff(frame_timestamp,self._initial_time)
-        if secs >= 3: # Object taking too long to move across
-            self.reset_tracking()
+        if secs >= 10: # Object taking too long to move across
+            self.reset_tracking(False)
+            # this forces a light level re-calc and base image refresh
+            self._object_detector.reset()      
+            print('Resetting detector')
             return
         
         (x,y,w,h) = rect
@@ -319,56 +329,64 @@ class ObjectTracking(object):
         if ((x <= self._object_detector._adjusted_save_buffer) and (direction == DetectionDirection.RIGHT_TO_LEFT)) \
                 or ((x+w >= self._monitored_width - self._object_detector._adjusted_save_buffer) \
                 and (direction == DetectionDirection.LEFT_TO_RIGHT)):
-            self.finish_tracking(frame_timestamp)
-
+            self.finish_tracking(frame_timestamp, True)
         else:
-            # if the object hasn't reached the end of the monitored area, just 
+            # if the object hasn't reached the end of the monitored area, just store last_x 
             self._last_x = x
 
-    def finish_tracking(self, frame_timestamp:datetime.datetime)->None:
+    def finish_tracking(self, frame_timestamp:datetime.datetime, inExitZone: bool)->None:
         #Last frame has skipped the buffer zone    
         if (self._counter > 2): 
             mean_speed = np.mean(self.speeds[:-1])   #Mean of all items except the last one
             sd = np.std(self.speeds[:-1])  #SD of all items except the last one
-            print("missed but saving")
         elif (self._counter > 1):
             mean_speed = self.speeds[-1] # use the last element in the array
             sd = 99 # Set it to a very high value to highlight it's not to be trusted.
-            print("missed but saving")
         else:
             mean_speed = 0 #ignore it 
             sd = 0
                 
         cap_time = frame_timestamp
-        data = DetectionResult(cap_time = cap_time, mean_speed = mean_speed, direction = self.direction, sd = sd, tracking_data=self.raw_tracking_data)
+        result = DetectionResult(cap_time = cap_time, mean_speed = mean_speed, direction = self.direction, sd = sd, inExitZone=inExitZone, tracking_data=self.raw_tracking_data)
         # run callback
-        self._moving_object_detected(data)
+        self._moving_object_detected(result)
         #
-        self.reset_tracking()
+        self.reset_tracking(inExitZone)
 
-    def reset_tracking(self):
-        self.state = DetectionState.WAITING
-        self.direction = DetectionDirection.UNKNOWN        
-        print('Resetting tracking')
+    def reset_tracking(self, inExitZone):
+        # SAVING is used to wait until we get to state WAITING
+        self.state = DetectionState.SAVING if inExitZone else DetectionState.WAITING
+        self.direction = DetectionDirection.UNKNOWN  
+        self._last_x=0
 
 
     def update_state(self,object_detection: Tuple[bool,Tuple[int,int,int,int]],frame_timestamp: datetime.datetime):
         (object_found,object_rect) = object_detection
         if object_found:
             if self.state==DetectionState.WAITING:
+                # start off tracking
                 self.start_tracking(object_rect,frame_timestamp)
             elif self.state == DetectionState.TRACKING:
+                # update tracking state
                 self.update_tracking(object_rect,frame_timestamp)
+                pass
+            elif self.state == DetectionState.SAVING:
+                # just wait until we stop detecting the vehicle and move to waiting
+                pass
             else:
                 raise ValueError(f"Unexpected tracking state [{self.state}] found")
         else:
             if self.state==DetectionState.TRACKING:
-                self.finish_tracking(frame_timestamp)
-                self.reset_tracking()
+                self.finish_tracking(frame_timestamp,False)
+            elif self.state==DetectionState.SAVING:
+                self.reset_tracking(False)
             elif self.state==DetectionState.WAITING:
                 pass
             else:
                 raise ValueError(f"Unexpected tracking state [{self.state}] found")
+    
+    def getStateStr(self):
+        return ObjectTracking.DETECTION_STATE_TEXT[self.state]
     
 class CarSpeedMonitor(object):
     
@@ -405,7 +423,7 @@ class CarSpeedMonitor(object):
                 f.write(result.toJson())
 
         def moving_object_detected(result: DetectionResult):
-            if (result.mean_speed > min_speed_save and result.mean_speed < max_speed_save):    
+            if (result.mean_speed > min_speed_save and result.mean_speed < max_speed_save):                
                 store_image(result)
                 if detection_hook:
                     detection_hook(result)
@@ -421,7 +439,11 @@ class CarSpeedMonitor(object):
             # draw the timestamp and tracking state
             cv2.putText(image, frame_timestamp.strftime("%A %d %B %Y %I:%M:%S%p"),
                 (10, image.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 1)
-            cv2.putText(image, f"Tracking state: {object_tracking.state}", (10, 20),
+            cv2.putText(image, f"Tracking state: {object_tracking.getStateStr()}", (10, 20),
+                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
+            cv2.putText(image, f"Detection enabled: {detection_enabled}", (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
+            cv2.putText(image, f"Frame rate: {frame_rate:3.0f} fps", (10, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
         
             # draw monitored area
@@ -430,16 +452,18 @@ class CarSpeedMonitor(object):
             # add last found object
             (object_found, object_rect) = object_detection
             if object_found:
-                red = (255, 0, 0)
+                blue = (255, 0, 0)
                 (x1,y1,w,h)=object_rect
+                x1+=upper_left_x
+                y1+=upper_left_y
                 x2=x1+w
                 y2=y1+h
-                cv2.rectangle(image,(x1,y1),(x2,y2),red)
+                cv2.rectangle(image,(x1,y1),(x2,y2),blue)
 
         def process_image():
-
-            object_detection = object_detector.detectObject(image)
-            object_tracking.update_state(object_detection,frame_timestamp)                    
+            object_detection = object_detector.detectObject(cropped_image)
+            if detection_enabled:
+                object_tracking.update_state(object_detection,frame_timestamp)
             annotate_image(object_detection)
             # show the frame
             if show_preview:
@@ -475,23 +499,31 @@ class CarSpeedMonitor(object):
         camera.picam.pre_callback = pre_capture_callback
         object_detector = ObjectDetector()
         object_tracking = ObjectTracking(self.config,camera.image_width,object_detector,moving_object_detected)
+        frame_rate:float=0
+        detection_enabled:bool = True
+        frame_count:int=0;
+        st:float = time.monotonic()
         #
         while True:
-            st = time.time()
             # grab the raw NumPy array representing the image 
             image = camera.picam.capture_array('main')
-            lap1=time.time()
             # crop area defined by [y1:y2,x1:x2]
             cropped_image = image[upper_left_y:lower_right_y,upper_left_x:lower_right_x]
             process_image()
-            lap2=time.time()
-            if object_tracking.state == DetectionState.WAITING:
-                key = cv2.waitKey(1) & 0xFF
-                # if the `q` key is pressed, break from the loop and terminate processing
-                if key == ord("q"):
-                    break; 
+            frame_count+=1
+            if frame_count % 50 == 0:
+                ft = time.monotonic()
+                frame_rate=50/(ft-st)
+                st=time.monotonic()
+
+            #if object_tracking.state == DetectionState.WAITING:
+            key = cv2.waitKey(1) & 0xFF
+            # if the `q` key is pressed, break from the loop and terminate processing
+            if key == ord("q"):
+                break; 
+            if key == ord("t"):
+                detection_enabled = not detection_enabled
             #
-            ft = time.time()
             #print(f'Loop capture_array=[{lap1-st:.3f}] process_image=[{lap2-lap1:.3f}] [{ft-lap2:.3f}]')
             #time.sleep(0.5)
         
