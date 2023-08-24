@@ -44,6 +44,13 @@ def inputFloat(prompt, value):
     else:
         return value
 
+def inputInt(prompt, value):
+    text = input(f'{prompt} [{value}]: ')
+    if text:
+        return int(text)
+    else:
+        return value
+
 def inputBool(prompt, value):
     if isinstance(value,bool):
         defValue = "y" if value else "n"
@@ -57,9 +64,9 @@ def inputBool(prompt, value):
     
 config.l2r_distance = inputFloat(f"Left to right distance (feet)", config.l2r_distance)
 config.r2l_distance = inputFloat(f"Right to left distance (feet)",config.r2l_distance)
-config.min_speed_image = inputFloat(f"Min speed for image save (mph)",config.min_speed_image)
-config.min_speed_save = inputFloat(f"Min speed to report (mph)",config.min_speed_save)
-config.max_speed_save = inputFloat(f"Max speed to report (mph)",config.max_speed_save)
+config.min_speed_image = inputInt(f"Min speed for image save (mph)",config.min_speed_image)
+config.min_speed_save = inputInt(f"Min speed to report (mph)",config.min_speed_save)
+config.max_speed_save = inputInt(f"Max speed to report (mph)",config.max_speed_save)
 config.field_of_view = inputFloat(f"Camera's field of view (deg)",config.field_of_view)
 a = config.monitor_area
 value = inputBool(f"Update monitor area?",f"({a.upper_left_x},{a.upper_left_y}),({a.lower_right_x},{a.lower_right_y})")

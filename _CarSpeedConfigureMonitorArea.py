@@ -6,7 +6,9 @@ class MonitorArea(object):
         self.lower_right_y = lry
 
 class ConfigureMonitorArea(object):
-    def __init__(self):
+    def __init__(self, h_flip:bool,v_flip: bool):
         self.area = MonitorArea(1,2,3,4)
+        self.h_flip=h_flip
+        self.v_flip=v_flip
     def start(self):
         pass

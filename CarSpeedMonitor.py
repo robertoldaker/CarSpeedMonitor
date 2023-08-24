@@ -12,6 +12,8 @@ import numpy as np
 import json
 import os
 from pathlib import Path
+from pynput import keyboard
+
 
 # Current detection state
 class DetectionState(IntEnum):
@@ -66,7 +68,7 @@ class ObjectDetector(object):
         self._last_lightlevel=0
         self._adjusted_min_area=0
         self._adjusted_threshold=0
-        self._adjusted_savebuffer=0
+        self._adjusted_save_buffer=0
         self._lightlevel_time:Union[None,datetime.datetime]=None
             
     def update_base_image(self,gray)->None:
@@ -77,7 +79,6 @@ class ObjectDetector(object):
     def update_lightlevel(self,image,gray)->None:
         def get_save_buffer(light: float):
             save_buffer = int((100/(light - 0.5)) + ObjectDetector.MIN_SAVE_BUFFER)    
-            print(" save buffer " + str(save_buffer))
             return save_buffer
         
         def get_threshold(light: float)->int:
@@ -90,15 +91,14 @@ class ObjectDetector(object):
                 threshold = 60
             else:
                 threshold = ObjectDetector.THRESHOLD
-            print("threshold= " + str(threshold))
             return threshold
         
         def get_min_area(light: float)->int:
             if (light > 10):
                 light = 10;
             area =int((1000 * math.sqrt(light - 1)) + 100)
-            print("min area= " + str(area)) 
-            return area
+            #return area
+            return 10000
         
         def measure_light(hsvImg)->int:
             #Determine luminance level of monitored area 
@@ -107,7 +107,6 @@ class ObjectDetector(object):
             windowsize = (hsvImg.size)/3   #There are 3 pixels per HSV value 
             count = 0
             sum = 0
-            print (windowsize)
             for value in hist:
                 sum = sum + value
                 count +=1    
@@ -123,13 +122,15 @@ class ObjectDetector(object):
         #Set threshold and min area and save_buffer based on light readings
         self._last_lightlevel = self._lightlevel
         self._lightlevel = my_map(measure_light(hsv),0,256,1,10)
-        print("light level = " + str(self._lightlevel))
         self._adjusted_min_area = get_min_area(self._lightlevel)
         self._adjusted_threshold = get_threshold(self._lightlevel)
         self._adjusted_save_buffer = get_save_buffer(self._lightlevel)
+        print(f"LIGHT_LEVEL_UPDATE: (level={self._lightlevel}) (min_area={self._adjusted_min_area}) (threshold={self._adjusted_threshold}) (save_buffer={self._adjusted_save_buffer}))")
         self._lightlevel_time=datetime.datetime.now()
-        if ( self._last_lightlevel!=self._lightlevel):
-            self.update_base_image(gray)
+        ###if ( self._last_lightlevel!=self._lightlevel):
+        ###    self.update_base_image(gray)
+        ### since I can;t get accumulateWeithed to work always refresh the base_image when the lightlevel taken
+        self.update_base_image(gray)
 
     def reset(self):
         self._lightlevel=-1
@@ -174,10 +175,13 @@ class ObjectDetector(object):
                 found_object = True
         #
         if not found_object:
-            #cv2.accumulateWeighted(gray, self._base_image, 0.25)
+            ### can't get this to work so commented out
+            ### and re-do base_image when lightlevel taken
+            ###cv2.accumulateWeighted(gray, self._base_image, 0.25)
             # update light level every 60secs assuming no car detected
             if not self._lightlevel_time is None and (datetime.datetime.now()-self._lightlevel_time).total_seconds() > 60:
                 self.update_lightlevel(image,gray)
+
         #            
         return (found_object,rect)
 
@@ -285,8 +289,8 @@ class ObjectTracking(object):
             if (car_gap<ObjectTracking.TOO_CLOSE):   
                 self.state = DetectionState.WAITING
                 print("too close")
-
-    def update_tracking(self,rect:Tuple[int,int,int,int],frame_timestamp:datetime.datetime)->None:
+    
+    def check_tracking(self,frame_timestamp:datetime.datetime):
         # compute the elapsed time
         secs = ObjectTracking.secs_diff(frame_timestamp,self._initial_time)
         if secs >= 10: # Object taking too long to move across
@@ -294,8 +298,12 @@ class ObjectTracking(object):
             # this forces a light level re-calc and base image refresh
             self._object_detector.reset()      
             print('Resetting detector')
-            return
+            return False
+        return True
+
+    def update_tracking(self,rect:Tuple[int,int,int,int],frame_timestamp:datetime.datetime)->None:
         
+        secs = ObjectTracking.secs_diff(frame_timestamp,self._initial_time)
         (x,y,w,h) = rect
         area=w*h
 
@@ -368,19 +376,22 @@ class ObjectTracking(object):
                 self.start_tracking(object_rect,frame_timestamp)
             elif self.state == DetectionState.TRACKING:
                 # update tracking state
-                self.update_tracking(object_rect,frame_timestamp)
-                pass
+                if self.check_tracking(frame_timestamp):
+                    self.update_tracking(object_rect,frame_timestamp)
             elif self.state == DetectionState.SAVING:
-                # just wait until we stop detecting the vehicle and move to waiting
-                pass
+                # ensure we haven;t timedout waiting for a no detection
+                self.check_tracking(frame_timestamp)
             else:
                 raise ValueError(f"Unexpected tracking state [{self.state}] found")
         else:
             if self.state==DetectionState.TRACKING:
+                # stop tracking since no vehicle is now detected
                 self.finish_tracking(frame_timestamp,False)
             elif self.state==DetectionState.SAVING:
+                # means vehicle has passed out of view so reset back to waiting
                 self.reset_tracking(False)
             elif self.state==DetectionState.WAITING:
+                # just wait!
                 pass
             else:
                 raise ValueError(f"Unexpected tracking state [{self.state}] found")
@@ -390,6 +401,7 @@ class ObjectTracking(object):
     
 class CarSpeedMonitor(object):
     
+    WINDOW_NAME="Car Speed Monitor"
     def __init__(self, config: CarSpeedConfig) -> None:
         self.config = config
     
@@ -441,11 +453,12 @@ class CarSpeedMonitor(object):
                 (10, image.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 1)
             cv2.putText(image, f"Tracking state: {object_tracking.getStateStr()}", (10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
-            cv2.putText(image, f"Detection enabled: {detection_enabled}", (10, 60),
+            cv2.putText(image, f"Detection enabled: {detection_enabled}", (10, 35),
                 cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
-            cv2.putText(image, f"Frame rate: {frame_rate:3.0f} fps", (10, 40),
+            cv2.putText(image, f"Frame rate: {frame_rate:3.0f} fps", (10, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)        
+            cv2.putText(image, f"Enter 'q' to quit, 'd' to toggle detection", (10, 65),
                 cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
-        
             # draw monitored area
             green = (0, 255, 0)
             cv2.rectangle(image,(upper_left_x,upper_left_y),(lower_right_x,lower_right_y),green)
@@ -467,7 +480,18 @@ class CarSpeedMonitor(object):
             annotate_image(object_detection)
             # show the frame
             if show_preview:
-                cv2.imshow("Speed Camera", image)                
+                cv2.imshow(CarSpeedMonitor.WINDOW_NAME, image)  
+
+        def on_key_press(key):
+            nonlocal cont, detection_enabled            
+            char = key.char
+            # quit
+            if char == "q":
+                cont = False
+            # toggle detection
+            if char == "d":
+                detection_enabled = not detection_enabled
+                
 
         # store local variables from config
         ma = self.config.monitor_area
@@ -487,8 +511,15 @@ class CarSpeedMonitor(object):
         time.sleep(0.9)
 
         # create an image window and place it in the upper left corner of the screen
-        cv2.namedWindow("Speed Camera")
-        cv2.moveWindow("Speed Camera", 10, 40)
+        if show_preview:
+            cv2.namedWindow(CarSpeedMonitor.WINDOW_NAME)
+            cv2.moveWindow(CarSpeedMonitor.WINDOW_NAME, 10, 40)
+        
+        cont = True
+        listener = keyboard.Listener(
+            on_press=on_key_press)
+        listener.start()
+
                     
         # this gets called after frame captured but before call capture_array
         frame_timestamp = datetime.datetime.now()
@@ -504,10 +535,10 @@ class CarSpeedMonitor(object):
         frame_count:int=0;
         st:float = time.monotonic()
         #
-        while True:
+        while cont:
             # grab the raw NumPy array representing the image 
             image = camera.picam.capture_array('main')
-            # crop area defined by [y1:y2,x1:x2]
+            # crop area defined by detection areat defined in the config
             cropped_image = image[upper_left_y:lower_right_y,upper_left_x:lower_right_x]
             process_image()
             frame_count+=1
@@ -515,18 +546,15 @@ class CarSpeedMonitor(object):
                 ft = time.monotonic()
                 frame_rate=50/(ft-st)
                 st=time.monotonic()
+                if not show_preview:
+                    print(f'Frame rate={frame_rate:3.0f}',end="\r")
 
-            #if object_tracking.state == DetectionState.WAITING:
-            key = cv2.waitKey(1) & 0xFF
-            # if the `q` key is pressed, break from the loop and terminate processing
-            if key == ord("q"):
-                break; 
-            if key == ord("t"):
-                detection_enabled = not detection_enabled
+            # needed to ensure the images in the preview window get updated
+            if show_preview:
+                key = cv2.waitKey(1) & 0xFF
             #
-            #print(f'Loop capture_array=[{lap1-st:.3f}] process_image=[{lap2-lap1:.3f}] [{ft-lap2:.3f}]')
-            #time.sleep(0.5)
         
+        print("Quitting ...")
         # cleanup the camera and close any open windows
         cv2.destroyAllWindows()
 

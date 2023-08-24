@@ -4,10 +4,10 @@ import pathlib
 class MonitorArea(object):
     def __init__(self,data=None):
         self.class_name = self.__class__.__name__
-        self.upper_left_x = 0
-        self.upper_left_y = 0
-        self.lower_right_x = 0
-        self.lower_right_y = 0
+        self.upper_left_x:int = 0
+        self.upper_left_y:int = 0
+        self.lower_right_x:int = 0
+        self.lower_right_y:int = 0
         if data:
             self.__dict__ = data
 
@@ -15,12 +15,12 @@ class CarSpeedConfig(object):
     DEF_CONFIG_FILE = "CarSpeed.json"
     def __init__(self,data=None):
         self.class_name = self.__class__.__name__
-        self.l2r_distance = 47
-        self.r2l_distance = 37
-        self.min_speed_image = 0
-        self.min_speed_save = 10
-        self.max_speed_save = 80
-        self.field_of_view = 75 # 75 is standard pi camera module 3, 120 for wide angle
+        self.l2r_distance:float = 47
+        self.r2l_distance:float = 37
+        self.min_speed_image:int = 0
+        self.min_speed_save:int = 10
+        self.max_speed_save:int = 80
+        self.field_of_view:float = 75 # 75 is standard pi camera module 3, 120 for wide angle
         self.h_flip = False
         self.v_flip = False
         self.monitor_area = MonitorArea()
