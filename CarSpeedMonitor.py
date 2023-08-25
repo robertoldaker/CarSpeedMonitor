@@ -62,14 +62,15 @@ class ObjectDetector(object):
     THRESHOLD = 25
     MIN_SAVE_BUFFER = 2
 
-    def __init__(self)->None:
+    def __init__(self, min_area:int)->None:
         self._base_image = None
         self._lightlevel=-1
         self._last_lightlevel=0
-        self._adjusted_min_area=0
+        self._adjusted_min_area=min_area
         self._adjusted_threshold=0
         self._adjusted_save_buffer=0
         self._lightlevel_time:Union[None,datetime.datetime]=None
+        self._first_pass=True
             
     def update_base_image(self,gray)->None:
         print("updating base_image")
@@ -122,7 +123,8 @@ class ObjectDetector(object):
         #Set threshold and min area and save_buffer based on light readings
         self._last_lightlevel = self._lightlevel
         self._lightlevel = my_map(measure_light(hsv),0,256,1,10)
-        self._adjusted_min_area = get_min_area(self._lightlevel)
+        ### now fixed
+        #self._adjusted_min_area = get_min_area(self._lightlevel)
         self._adjusted_threshold = get_threshold(self._lightlevel)
         self._adjusted_save_buffer = get_save_buffer(self._lightlevel)
         print(f"LIGHT_LEVEL_UPDATE: (level={self._lightlevel}) (min_area={self._adjusted_min_area}) (threshold={self._adjusted_threshold}) (save_buffer={self._adjusted_save_buffer}))")
@@ -133,10 +135,12 @@ class ObjectDetector(object):
         self.update_base_image(gray)
 
     def reset(self):
-        self._lightlevel=-1
-        
+        self._first_pass=True
+    
+    def needs_lightlevel_update(self)->bool:
+        return not self._lightlevel_time is None and (datetime.datetime.now()-self._lightlevel_time).total_seconds() > 60
 
-    def detectObject(self,image)->Tuple[bool,Tuple[int,int,int,int]]:                 
+    def detectObject(self,image)->Tuple[bool,Tuple[int,int,int,int]]:
         # convert the frame to grayscale, and blur it
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, ObjectDetector.BLURSIZE, 0)
@@ -145,8 +149,9 @@ class ObjectDetector(object):
         #if self._base_image is None:
         #    self.update_base_image(image)
 
-        if self._lightlevel == -1:   #First pass through only
+        if self._first_pass:  #First pass through only get light level and define base_image
             self.update_lightlevel(image,gray)
+            self._first_pass = False
 
         # compute the absolute difference between the current image and
         # base image and then turn eveything lighter gray than THRESHOLD into
@@ -165,22 +170,22 @@ class ObjectDetector(object):
         rect: Tuple[int,int,int,int] = (0,0,0,0)
         # examine the contours, looking for the largest one
         for c in cnts:
-            rect = cv2.boundingRect(c)
-            (x, y, w, h) = rect
+            (x, y, w, h) = cv2.boundingRect(c)
             # get an approximate area of the contour
             found_area = w*h
             # find the largest bounding rectangle
             if (found_area > self._adjusted_min_area) and (found_area > biggest_area):  
                 biggest_area = found_area
                 found_object = True
+                rect = (x,y, w, h)
         #
         if not found_object:
             ### can't get this to work so commented out
             ### and re-do base_image when lightlevel taken
             ###cv2.accumulateWeighted(gray, self._base_image, 0.25)
             # update light level every 60secs assuming no car detected
-            if not self._lightlevel_time is None and (datetime.datetime.now()-self._lightlevel_time).total_seconds() > 60:
-                self.update_lightlevel(image,gray)
+            if self.needs_lightlevel_update():
+                self.update_lightlevel(image,gray)                
 
         #            
         return (found_object,rect)
@@ -239,13 +244,9 @@ class ObjectTracking(object):
         ma = config.monitor_area
         self._monitored_width = ma.lower_right_x - ma.upper_left_x
 
-        fov = config.field_of_view
-        l2r_distance = config.l2r_distance
-        r2l_distance = config.l2r_distance
-        l2r_frame_width_ft = 2*(math.tan(math.radians(fov*0.5))*l2r_distance)
-        r2l_frame_width_ft = 2*(math.tan(math.radians(fov*0.5))*r2l_distance)
-        self._l2r_ftperpixel = l2r_frame_width_ft / float(image_width)
-        self._r2l_ftperpixel = r2l_frame_width_ft / float(image_width)
+        # work out ft per pixel in both directions
+        self._l2r_ftperpixel = config.getL2RFrameWidthFt() / float(image_width)
+        self._r2l_ftperpixel = config.getL2RFrameWidthFt() / float(image_width)
 
     # calculate elapsed seconds
     @staticmethod
@@ -294,12 +295,17 @@ class ObjectTracking(object):
         # compute the elapsed time
         secs = ObjectTracking.secs_diff(frame_timestamp,self._initial_time)
         if secs >= 10: # Object taking too long to move across
-            self.reset_tracking(False)
-            # this forces a light level re-calc and base image refresh
-            self._object_detector.reset()      
-            print('Resetting detector')
+            self.reset()
             return False
         return True
+    
+    def reset(self):
+        self.reset_tracking(False)
+        # this forces a light level re-calc and base image refresh
+        self._object_detector.reset()      
+        print('Resetting tracking and detector')
+        return False
+
 
     def update_tracking(self,rect:Tuple[int,int,int,int],frame_timestamp:datetime.datetime)->None:
         
@@ -491,6 +497,9 @@ class CarSpeedMonitor(object):
             # toggle detection
             if char == "d":
                 detection_enabled = not detection_enabled
+            # reset 
+            if char == "r":
+                object_tracking.reset()
                 
 
         # store local variables from config
@@ -528,8 +537,13 @@ class CarSpeedMonitor(object):
             frame_timestamp = datetime.datetime.now()
         
         camera.picam.pre_callback = pre_capture_callback
-        object_detector = ObjectDetector()
+        # min width in pixels of a car
+        min_width=5/(self.config.getL2RFrameWidthFt())*camera.image_width
+        min_area=min_width*min_width
+
+        object_detector = ObjectDetector(int(min_area))
         object_tracking = ObjectTracking(self.config,camera.image_width,object_detector,moving_object_detected)
+        
         frame_rate:float=0
         detection_enabled:bool = True
         frame_count:int=0;

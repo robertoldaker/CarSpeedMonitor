@@ -1,5 +1,7 @@
 import json
 import pathlib
+import math
+from typing import Union
 
 class MonitorArea(object):
     def __init__(self,data=None):
@@ -25,16 +27,24 @@ class CarSpeedConfig(object):
         self.v_flip = False
         self.monitor_area = MonitorArea()
         if  data:
-            self.__dict__ = data
+            self.__dict__ = data   
             
-    def toJson(self):
+    def getL2RFrameWidthFt(self)->float:
+        frame_width_ft = 2*(math.tan(math.radians(self.field_of_view*0.5))*self.l2r_distance)
+        return frame_width_ft
+    
+    def getR2LFrameWidthFt(self)->float:
+        frame_width_ft = 2*(math.tan(math.radians(self.field_of_view*0.5))*self.r2l_distance)
+        return frame_width_ft
+
+    def toJson(self)->str:
         return json.dumps(self, default=lambda o: o.__dict__, indent=4)
     @staticmethod
-    def fromJsonFile(file):
+    def fromJsonFile(file:str):
         with open(file,"r") as f:
             return json.load(f, object_hook=CarSpeedConfig._objectHook)
     @staticmethod
-    def fromJsonStr(str):
+    def fromJsonStr(str:str)->str:
         return json.loads(str, object_hook=CarSpeedConfig._objectHook)
     @staticmethod
     def fromDefJsonFile():
