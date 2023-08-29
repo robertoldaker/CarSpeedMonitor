@@ -29,16 +29,24 @@ class DetectionDirection(IntEnum):
     RIGHT_TO_LEFT = 2
 
 class TrackingData(object):
-    def __init__(self,abs_chg: int,secs: float,mph: float,x: int,biggest_area: int,direction: DetectionDirection):
+    def __init__(self,abs_chg: int,secs: float,mph: float,x: int,width: int,image):
         self.abs_chg = abs_chg
         self.secs = secs
         self.mph = mph
         self.x = x
-        self.biggest_area = biggest_area
-        self.direction = direction
-    
+        self.width = width
+        self.image=image.copy()
+
+    @staticmethod    
+    def _jsonDict(o: object)->dict:
+        d = dict(o.__dict__)
+        # remove fields not for serialization
+        del d['image']
+        return d
+
     def toJson(self)->str:
-        return json.dumps(self, default=lambda o: o.__dict__, indent=4)   
+        return json.dumps(self, default=TrackingData._jsonDict, indent=4)  
+
 
 class DetectionResult(object):
     def __init__(self,cap_time: datetime.datetime, mean_speed: float,direction: DetectionDirection,sd: float,inExitZone: bool, tracking_data: List[TrackingData]):
@@ -49,9 +57,18 @@ class DetectionResult(object):
         self.sd = sd
         self.inExitZone=inExitZone
         self.tracking_data=tracking_data
+        self.image=None
     
+    @staticmethod    
+    def _jsonDict(o: object)->dict:
+        d = dict(o.__dict__)
+        # remove fields not for serialization
+        del d['image']
+        return d
+
     def toJson(self)->str:
-        return json.dumps(self, default=lambda o: o.__dict__, indent=4)    
+        return json.dumps(self, default=DetectionResult._jsonDict, indent=4)  
+
     
     def getCaptureTime(self)->datetime.datetime:
         return datetime.datetime.fromtimestamp(self.posix_time)
@@ -63,6 +80,8 @@ class ObjectDetector(object):
     MIN_SAVE_BUFFER = 2
 
     def __init__(self, min_area:int)->None:
+        self.rect=(0,0,0,0)
+        self.ncontours=0
         self._base_image = None
         self._lightlevel=-1
         self._last_lightlevel=0
@@ -140,7 +159,7 @@ class ObjectDetector(object):
     def needs_lightlevel_update(self)->bool:
         return not self._lightlevel_time is None and (datetime.datetime.now()-self._lightlevel_time).total_seconds() > 60
 
-    def detectObject(self,image)->Tuple[bool,Tuple[int,int,int,int]]:
+    def detectObject(self,image)->bool:
         # convert the frame to grayscale, and blur it
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, ObjectDetector.BLURSIZE, 0)
@@ -167,7 +186,8 @@ class ObjectDetector(object):
         # look for bounding rect of object
         found_object:bool=False
         biggest_area:int = 0
-        rect: Tuple[int,int,int,int] = (0,0,0,0)
+        self.rect: Tuple[int,int,int,int] = (0,0,0,0)
+        self.ncontours = len(cnts)
         # examine the contours, looking for the largest one
         for c in cnts:
             (x, y, w, h) = cv2.boundingRect(c)
@@ -177,7 +197,7 @@ class ObjectDetector(object):
             if (found_area > self._adjusted_min_area) and (found_area > biggest_area):  
                 biggest_area = found_area
                 found_object = True
-                rect = (x,y, w, h)
+                self.rect = (x,y, w, h)
         #
         if not found_object:
             ### can't get this to work so commented out
@@ -188,7 +208,7 @@ class ObjectDetector(object):
                 self.update_lightlevel(image,gray)                
 
         #            
-        return (found_object,rect)
+        return found_object
 
 
 class CarSpeedCamera(object):
@@ -229,7 +249,7 @@ class ObjectTracking(object):
     def __init__(self,config: CarSpeedConfig,image_width: int,object_detector: ObjectDetector,moving_object_detected: Callable[[DetectionResult],None])->None:
         #
         self.state = DetectionState.WAITING
-        self.direction=DetectionDirection.UNKNOWN
+        self.direction = DetectionDirection.UNKNOWN
         self.raw_tracking_data=[]
         self.speeds:List[float]=list()
         self.sd=0
@@ -280,7 +300,7 @@ class ObjectTracking(object):
         self.sd=0  #Initialise standard deviation
         
         self._counter = 0   # use to test later if saving with too few data points    
-        print("x-chg    Secs      MPH  x-pos width     BA  DIR Count time")
+        print("x-chg    Secs      MPH  x-pos width     BA  DIR Count")
         if not self._cap_time == None:
             car_gap = ObjectTracking.secs_diff(self._initial_time, self._cap_time) 
             print("initial time = "+str(self._initial_time) + " " + "cap_time =" + str(self._cap_time) + " gap= " +\
@@ -307,18 +327,18 @@ class ObjectTracking(object):
         return False
 
 
-    def update_tracking(self,rect:Tuple[int,int,int,int],frame_timestamp:datetime.datetime)->None:
+    def update_tracking(self,rect:Tuple[int,int,int,int],image,frame_timestamp:datetime.datetime)->None:
         
         secs = ObjectTracking.secs_diff(frame_timestamp,self._initial_time)
         (x,y,w,h) = rect
         area=w*h
 
         if x >= self._last_x:
-            direction = DetectionDirection.LEFT_TO_RIGHT
+            self.direction = DetectionDirection.LEFT_TO_RIGHT
             abs_chg = (x + w) - (self._initial_x + self._initial_w)
             mph = ObjectTracking.get_speed(abs_chg,self._l2r_ftperpixel,secs)
         else:
-            direction = DetectionDirection.RIGHT_TO_LEFT
+            self.direction = DetectionDirection.RIGHT_TO_LEFT
             abs_chg = self._initial_x - x     
             mph = ObjectTracking.get_speed(abs_chg,self._r2l_ftperpixel,secs)           
 
@@ -328,27 +348,27 @@ class ObjectTracking(object):
 
         if mph < 0:
             print("negative speed - stopping tracking"+ "{0:7.2f}".format(secs))
-            if direction == DetectionDirection.LEFT_TO_RIGHT:
-                direction = DetectionDirection.RIGHT_TO_LEFT  #Reset correct direction
+            if self.direction == DetectionDirection.LEFT_TO_RIGHT:
+                self.direction = DetectionDirection.RIGHT_TO_LEFT  #Reset correct direction
                 x=1  #Force save
             else:
-                direction = DetectionDirection.LEFT_TO_RIGHT  #Reset correct direction
+                self.direction = DetectionDirection.LEFT_TO_RIGHT  #Reset correct direction
                 x=self._monitored_width + ObjectDetector.MIN_SAVE_BUFFER  #Force save
         else:
-            print(f"{abs_chg:4d}  {secs:7.2f}  {mph:7.0f}   {x:4d}  {w:4d} {area:6d} {int(direction):4d} {self._counter:5d} {frame_timestamp:%H:%M:%S.%f}")
-            self.raw_tracking_data.append(TrackingData(abs_chg=abs_chg,secs=secs,mph=mph,x=x,biggest_area=area,direction=direction))
+            print(f"{abs_chg:4d}  {secs:7.2f}  {mph:7.0f}   {x:4d}  {w:4d} {area:6d} {int(self.direction):4d} {self._counter:5d}")
+            self.raw_tracking_data.append(TrackingData(abs_chg=abs_chg,secs=secs,mph=mph,x=x,width=w,image=image))
         
         # is front of object close to the exit of the monitored boundary? Then write date, time and speed on image
         # and save it 
-        if ((x <= self._object_detector._adjusted_save_buffer) and (direction == DetectionDirection.RIGHT_TO_LEFT)) \
+        if ((x <= self._object_detector._adjusted_save_buffer) and (self.direction == DetectionDirection.RIGHT_TO_LEFT)) \
                 or ((x+w >= self._monitored_width - self._object_detector._adjusted_save_buffer) \
-                and (direction == DetectionDirection.LEFT_TO_RIGHT)):
+                and (self.direction == DetectionDirection.LEFT_TO_RIGHT)):
             self.finish_tracking(frame_timestamp, True)
         else:
             # if the object hasn't reached the end of the monitored area, just store last_x 
             self._last_x = x
 
-    def finish_tracking(self, frame_timestamp:datetime.datetime, inExitZone: bool)->None:
+    def finish_tracking(self, frame_timestamp:datetime.datetime, inExitZone: bool,)->None:
         #Last frame has skipped the buffer zone    
         if (self._counter > 2): 
             mean_speed = np.mean(self.speeds[:-1])   #Mean of all items except the last one
@@ -370,20 +390,18 @@ class ObjectTracking(object):
     def reset_tracking(self, inExitZone):
         # SAVING is used to wait until we get to state WAITING
         self.state = DetectionState.SAVING if inExitZone else DetectionState.WAITING
-        self.direction = DetectionDirection.UNKNOWN  
         self._last_x=0
 
 
-    def update_state(self,object_detection: Tuple[bool,Tuple[int,int,int,int]],frame_timestamp: datetime.datetime):
-        (object_found,object_rect) = object_detection
-        if object_found:
+    def update_state(self,found_object: bool, object_rect: Tuple[int,int,int,int],image,frame_timestamp: datetime.datetime):
+        if found_object:
             if self.state==DetectionState.WAITING:
                 # start off tracking
                 self.start_tracking(object_rect,frame_timestamp)
             elif self.state == DetectionState.TRACKING:
                 # update tracking state
                 if self.check_tracking(frame_timestamp):
-                    self.update_tracking(object_rect,frame_timestamp)
+                    self.update_tracking(object_rect,image,frame_timestamp)
             elif self.state == DetectionState.SAVING:
                 # ensure we haven;t timedout waiting for a no detection
                 self.check_tracking(frame_timestamp)
@@ -413,7 +431,7 @@ class CarSpeedMonitor(object):
     
     def start(self, detection_hook, show_preview=False):
                 
-        def store_image(result: DetectionResult):
+        def annotate_main_image(result: DetectionResult):
             # timestamp the image - 
             cap_time = result.getCaptureTime()
             mean_speed = result.mean_speed
@@ -427,22 +445,10 @@ class CarSpeedMonitor(object):
             cv2.putText(image, "%.0f mph" % mean_speed,
             (cntr_x , int(image_height * 0.2)), cv2.FONT_HERSHEY_SIMPLEX, 2.00, (0, 255, 0), 3)
 
-            # and save the image to disk
-            folder = f'images/{cap_time.year:04}-{cap_time.month:02}-{cap_time.day:02}'
-            folderPath = Path(folder)
-            if not folderPath.is_dir():
-                os.makedirs(folder)                
-            imageFilename = folder + "/car_at_" + cap_time.strftime("%Y-%m-%d_%H-%M-%S") + ".jpg"
-            jsonFilename=folder + "/car_at_" + cap_time.strftime("%Y-%m-%d_%H-%M-%S") + ".json"
-
-            cv2.imwrite(imageFilename,image)
-            # write out json to config file
-            with open(jsonFilename, 'w') as f:
-                f.write(result.toJson())
-
         def moving_object_detected(result: DetectionResult):
             if (result.mean_speed > min_speed_save and result.mean_speed < max_speed_save):                
-                store_image(result)
+                annotate_main_image(result)
+                result.image = image.copy()
                 if detection_hook:
                     detection_hook(result)
                 # print json version to std out
@@ -452,25 +458,16 @@ class CarSpeedMonitor(object):
 
             
 
-        def annotate_image(object_detection: Tuple[bool,Tuple[int,int,int,int]]): 
+        def annotate_image_for_storage(found_object: bool,object_rect:Tuple[int,int,int,int]): 
             
             # draw the timestamp and tracking state
             cv2.putText(image, frame_timestamp.strftime("%A %d %B %Y %I:%M:%S%p"),
                 (10, image.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 1)
-            cv2.putText(image, f"Tracking state: {object_tracking.getStateStr()}", (10, 20),
-                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
-            cv2.putText(image, f"Detection enabled: {detection_enabled}", (10, 35),
-                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
-            cv2.putText(image, f"Frame rate: {frame_rate:3.0f} fps", (10, 50),
-                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)        
-            cv2.putText(image, f"Enter 'q' to quit, 'd' to toggle detection", (10, 65),
-                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
             # draw monitored area
             green = (0, 255, 0)
             cv2.rectangle(image,(upper_left_x,upper_left_y),(lower_right_x,lower_right_y),green)
             # add last found object
-            (object_found, object_rect) = object_detection
-            if object_found:
+            if found_object:
                 blue = (255, 0, 0)
                 (x1,y1,w,h)=object_rect
                 x1+=upper_left_x
@@ -479,27 +476,41 @@ class CarSpeedMonitor(object):
                 y2=y1+h
                 cv2.rectangle(image,(x1,y1),(x2,y2),blue)
 
+        def annotate_image_for_preview(): 
+            
+            # draw the timestamp and tracking state
+            cv2.putText(image, f"Tracking state: {object_tracking.getStateStr()}", (10, 20),
+                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
+            cv2.putText(image, f"Detection enabled: {detection_enabled}", (10, 35),
+                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
+            cv2.putText(image, f"Frame rate: {frame_rate:3.0f} fps, avg contours: {num_contours:3.0f}", (10, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)        
+            cv2.putText(image, f"Enter 'q' to quit, 'd' to toggle detection", (10, 65),
+                cv2.FONT_HERSHEY_SIMPLEX,0.35, (0, 0, 255), 1)
+
         def process_image():
-            object_detection = object_detector.detectObject(cropped_image)
+            found_object = object_detector.detectObject(cropped_image)
+            annotate_image_for_storage(found_object,object_detector.rect)
             if detection_enabled:
-                object_tracking.update_state(object_detection,frame_timestamp)
-            annotate_image(object_detection)
+                object_tracking.update_state(found_object,object_detector.rect,image,frame_timestamp)
             # show the frame
             if show_preview:
+                annotate_image_for_preview()
                 cv2.imshow(CarSpeedMonitor.WINDOW_NAME, image)  
 
         def on_key_press(key):
-            nonlocal cont, detection_enabled            
-            char = key.char
-            # quit
-            if char == "q":
-                cont = False
-            # toggle detection
-            if char == "d":
-                detection_enabled = not detection_enabled
-            # reset 
-            if char == "r":
-                object_tracking.reset()
+            nonlocal cont, detection_enabled 
+            if hasattr(key,'char'):
+                char = key.char
+                # quit
+                if char == "q":
+                    cont = False
+                # toggle detection
+                if char == "d":
+                    detection_enabled = not detection_enabled
+                # reset 
+                if char == "r":
+                    object_tracking.reset()
                 
 
         # store local variables from config
@@ -546,7 +557,9 @@ class CarSpeedMonitor(object):
         
         frame_rate:float=0
         detection_enabled:bool = True
-        frame_count:int=0;
+        frame_count:int=0
+        total_contours:int=0
+        num_contours:float=0
         st:float = time.monotonic()
         #
         while cont:
@@ -555,13 +568,17 @@ class CarSpeedMonitor(object):
             # crop area defined by detection areat defined in the config
             cropped_image = image[upper_left_y:lower_right_y,upper_left_x:lower_right_x]
             process_image()
+
             frame_count+=1
+            total_contours+=object_detector.ncontours
             if frame_count % 50 == 0:
                 ft = time.monotonic()
                 frame_rate=50/(ft-st)
+                num_contours=total_contours/50
+                total_contours=0
                 st=time.monotonic()
                 if not show_preview:
-                    print(f'Frame rate={frame_rate:3.0f}',end="\r")
+                    print(f'Frame rate={frame_rate:3.0f}, avg. contours={num_contours:3.0f}      ',end="\r")
 
             # needed to ensure the images in the preview window get updated
             if show_preview:
