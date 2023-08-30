@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 import argparse
 import cv2
+import time
 
 class CsvWriter:
     def __init__(self):
@@ -70,8 +71,12 @@ class DetectionSaver:
         
 
 def car_detected(data: DetectionResult):
+    st:float = time.monotonic()
     detectionSaver.save(data)
     csvWriter.add(data)
+    ft=time.monotonic()
+    print(f"saved in {(ft-st):6.3f}s")
+
 
 ap = argparse.ArgumentParser(description="Monitors car speed using raspberry pi camera")
 ap.add_argument("--file","-f", default=CarSpeedConfig.DEF_CONFIG_FILE, help="Filename to store config")
