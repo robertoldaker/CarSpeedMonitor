@@ -62,7 +62,7 @@ class DetectionUploader:
                 if r.status_code==200:
                     uploaded = True
                 else:
-                    print(f"Invalid ststus code uploaded detection [{r.status_code}]");
+                    print(f"Invalid status code uploaded detection [{r.status_code}]");
             except:
                 print(f"Problem uploading detection")                
         if uploaded:
