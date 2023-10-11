@@ -12,7 +12,12 @@ import numpy as np
 import json
 import os
 from pathlib import Path
-from pynput import keyboard
+try:
+    from pynput import keyboard
+    keyboard_avalable = True
+except:
+    keyboard_avalable = False
+    print("keyboard ignored")
 
 
 # Current detection state
@@ -423,13 +428,27 @@ class ObjectTracking(object):
     def getStateStr(self):
         return ObjectTracking.DETECTION_STATE_TEXT[self.state]
     
+class CarSpeedMonitorState:
+    def __init__(self,image,state:str, frameRate:float, detectionEnabled: bool, avgContours: int) -> None:
+        self.image=image.copy()
+        self.state=state
+        self.frameRate=frameRate
+        self.detectionEnabled=detectionEnabled
+        self.avgContours=avgContours
+    
+    def generateJpg(self):
+        (result,jpg) = cv2.imencode('.jpg', self.image)
+        self.jpg = jpg.data
+        del(self.image)
+
+    
 class CarSpeedMonitor(object):
     
     WINDOW_NAME="Car Speed Monitor"
     def __init__(self, config: CarSpeedConfig) -> None:
         self.config = config
     
-    def start(self, detection_hook, show_preview=False):
+    def start(self, detection_hook:Callable, preview_hook=None, show_preview=False):
                 
         def annotate_main_image(result: DetectionResult):
             # timestamp the image - 
@@ -494,9 +513,13 @@ class CarSpeedMonitor(object):
             if detection_enabled:
                 object_tracking.update_state(found_object,object_detector.rect,image,frame_timestamp)
             # show the frame
-            if show_preview:
+            if show_preview or preview_hook!=None:
                 annotate_image_for_preview()
-                cv2.imshow(CarSpeedMonitor.WINDOW_NAME, image)  
+                if show_preview:
+                    cv2.imshow(CarSpeedMonitor.WINDOW_NAME, image)
+                if preview_hook!=None:
+                    state=CarSpeedMonitorState(image, object_tracking.getStateStr(),frame_rate,detection_enabled,int(num_contours))
+                    preview_hook(state)
 
         def on_key_press(key):
             nonlocal cont, detection_enabled 
@@ -536,9 +559,10 @@ class CarSpeedMonitor(object):
             cv2.moveWindow(CarSpeedMonitor.WINDOW_NAME, 10, 40)
         
         cont = True
-        listener = keyboard.Listener(
-            on_press=on_key_press)
-        listener.start()
+        if keyboard_avalable:
+            listener = keyboard.Listener(
+                on_press=on_key_press)
+            listener.start()
 
                     
         # this gets called after frame captured but before call capture_array

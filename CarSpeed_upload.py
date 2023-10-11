@@ -1,4 +1,5 @@
-from CarSpeedMonitor import CarSpeedMonitor, DetectionResult
+import threading
+from CarSpeedMonitor import CarSpeedMonitor, CarSpeedMonitorState, DetectionResult
 from CarSpeedConfig import CarSpeedConfig
 from datetime import date
 from datetime import datetime
@@ -10,6 +11,9 @@ import time
 from zipfile import ZipFile
 import requests
 from multiprocessing import Process, Queue
+from signalrcore.hub_connection_builder import HubConnectionBuilder
+from signalrcore.protocol.messagepack_protocol import MessagePackHubProtocol
+import logging
 
 class DetectionUploader:
     def __init__(self):
@@ -68,9 +72,6 @@ class DetectionUploader:
         if uploaded:
             os.remove(fn)
         
-
-
-
     @staticmethod
     def _uploadWorker(q: Queue):
         for fn in iter(q.get, 'STOP'):
@@ -86,10 +87,88 @@ class DetectionUploader:
             print(f"Uploaded detection in {(ft-st):6.3f}s")
         print('Upload queue stopped')
 
+class SignalRHandler:
+    def __init__(self):
+        #.configure_logging(logging.DEBUG)\
+        server_url = "http://odin.local:5030/NotificationHub"
+        self.hub_connection = HubConnectionBuilder()\
+        .with_url(server_url)\
+        .with_hub_protocol(MessagePackHubProtocol())\
+        .with_automatic_reconnect({
+            "type": "raw",
+            "keep_alive_interval": 10,
+            "reconnect_interval": 5,
+            "max_attempts": 5
+        }).build()
+
+        self.hub_connection.on_open(lambda: print("connection opened and handshake received ready to send messages"))
+        self.hub_connection.on_close(lambda: print("connection closed"))
+
+        self.hub_connection.on("NewDetectionLoaded", SignalRHandler.newDetectionLoaded)
+    
+    def start(self):
+        self.hub_connection.start()
+    
+    def stop(self):
+        self.hub_connection.stop()
+    
+    def uploadPreview(self,st):
+        state=st.__dict__
+        self.hub_connection.send(
+            "PreviewState", # Method
+            [state], # Params
+        )
+
+    @staticmethod
+    def newDetectionLoaded(args):
+        print("New detection loaded!!")
+
+class PreviewUploader:
+    def __init__(self):
+        self.uploadQueue = Queue()
+        self.process = Process(target=PreviewUploader.uploadWorker,args=[self.uploadQueue,])
+        self.process.start()
+    
+    def upload(self,result:CarSpeedMonitorState):
+        if self.uploadQueue.empty():
+            self.uploadQueue.put(result)
+        else:
+            #print('ignored preview waiting for upload slot')
+            pass
+    
+    def stop(self):
+        self.uploadQueue.put('STOP')
+            
+    @staticmethod
+    def _uploadWorker(q: Queue):
+        for fn in iter(q.get, 'STOP'):
+            print(fn)
+
+    @staticmethod
+    def uploadWorker(q: Queue):
+        signalRHandler = SignalRHandler()
+        signalRHandler.start()
+        for state in iter(q.get, 'STOP'):
+            st:float = time.monotonic()
+            #try:
+            state.generateJpg()
+            signalRHandler.uploadPreview(state)
+            ft=time.monotonic()
+            #print(f"Uploaded preview in {(ft-st):6.3f}s [{len(jpg)}]")
+            #except:
+            #    print('Exception in uploadWorker')
+        print('Upload queue stopped')
+        signalRHandler.stop()
+        print('signalRhandler stopped')
 
 def main():
+
     def car_detected(result: DetectionResult):
         detectionUploader.upload(result)
+
+    def preview_available(state:CarSpeedMonitorState):
+        previewUploader.upload(state)
+
     ap = argparse.ArgumentParser(description="Monitors car speed using raspberry pi camera")
     ap.add_argument("--file","-f", default=CarSpeedConfig.DEF_CONFIG_FILE, help="Filename to store config")
     ap.add_argument("--preview","-p", action='store_true', help="Create preview window")
@@ -98,16 +177,20 @@ def main():
     show_preview = args["preview"]
 
     detectionUploader = DetectionUploader()
+    previewUploader = PreviewUploader()
 
     # open config
     config = CarSpeedConfig.fromDefJsonFile()
 
+    
     # start the monitor
     if config!=None:
         proc = CarSpeedMonitor(config)
-        proc.start(detection_hook=car_detected,show_preview=show_preview)
+        proc.start(detection_hook=car_detected,preview_hook=preview_available,show_preview=show_preview)
         detectionUploader.stop()
         print('detection uploader stopped')
+        previewUploader.stop()
+        print('preview uploader stopped')
 
 if __name__ == '__main__':
     main()
