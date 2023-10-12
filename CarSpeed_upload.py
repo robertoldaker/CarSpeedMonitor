@@ -1,6 +1,7 @@
 import threading
 from CarSpeedMonitor import CarSpeedMonitor, CarSpeedMonitorState, DetectionResult
 from CarSpeedConfig import CarSpeedConfig
+from SignalRHandler import SignalRHandler
 from datetime import date
 from datetime import datetime
 from pathlib import Path
@@ -86,42 +87,6 @@ class DetectionUploader:
             ft=time.monotonic()
             print(f"Uploaded detection in {(ft-st):6.3f}s")
         print('Upload queue stopped')
-
-class SignalRHandler:
-    def __init__(self):
-        #.configure_logging(logging.DEBUG)\
-        server_url = "http://odin.local:5030/NotificationHub"
-        self.hub_connection = HubConnectionBuilder()\
-        .with_url(server_url)\
-        .with_hub_protocol(MessagePackHubProtocol())\
-        .with_automatic_reconnect({
-            "type": "raw",
-            "keep_alive_interval": 10,
-            "reconnect_interval": 5,
-            "max_attempts": 5
-        }).build()
-
-        self.hub_connection.on_open(lambda: print("connection opened and handshake received ready to send messages"))
-        self.hub_connection.on_close(lambda: print("connection closed"))
-
-        self.hub_connection.on("NewDetectionLoaded", SignalRHandler.newDetectionLoaded)
-    
-    def start(self):
-        self.hub_connection.start()
-    
-    def stop(self):
-        self.hub_connection.stop()
-    
-    def uploadPreview(self,st):
-        state=st.__dict__
-        self.hub_connection.send(
-            "PreviewState", # Method
-            [state], # Params
-        )
-
-    @staticmethod
-    def newDetectionLoaded(args):
-        print("New detection loaded!!")
 
 class PreviewUploader:
     def __init__(self):
