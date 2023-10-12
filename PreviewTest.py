@@ -19,6 +19,7 @@ def main():
 
     state=CarSpeedMonitorState(jpg,"WAITING",19,True,99)
 
+    x=1;
     while key != "e":        
         key = input(">> ")
         if key == "u":
@@ -26,6 +27,9 @@ def main():
             state.detectionEnabled=not state.detectionEnabled
             state.frameRate+=1
             state.avgContours+=1
+        if key == "l":
+            signalR.logMessage(f'Hello world! {x}')
+            x+=1
     
     signalR.stop()
 

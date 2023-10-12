@@ -53,3 +53,10 @@ class SignalRHandler:
                 "PreviewState", # Method
                 [state], # Params
             )
+
+    def logMessage(self,mess):
+        if self.connected:
+            self.hub_connection.send(
+                "LogMessage", # Method
+                [mess], # Params
+            )            
