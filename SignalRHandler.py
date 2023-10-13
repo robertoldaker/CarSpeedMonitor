@@ -1,12 +1,10 @@
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 from signalrcore.protocol.messagepack_protocol import MessagePackHubProtocol
 import logging
+import time
 
 class SignalRHandler:
-    def __init__(self,server_root=None,debugLogging=False):
-        #\
-        if ( not server_root):
-            server_root = "http://odin.local:5030"
+    def __init__(self,server_root,debugLogging=False):
         self.connected = False
         self.server_url=f'{server_root}/NotificationHub'
         builder= HubConnectionBuilder()\
@@ -16,7 +14,7 @@ class SignalRHandler:
             "type": "raw",
             "keep_alive_interval": 10,
             "reconnect_interval": 5,
-            "max_attempts": 5
+            "max_attempts": 100000
         })
         if debugLogging:
             builder = builder.configure_logging(logging.DEBUG)
@@ -30,18 +28,21 @@ class SignalRHandler:
             self.connected=False
             print("connection closed")
 
-        def monitorStateUpdated(data):
-            if debugLogging:
-                print("MonitoStateUpdated")
-                print(data)
-
         self.hub_connection.on_open(onOpen)
         self.hub_connection.on_close(onClose)
-
-        self.hub_connection.on("MonitorStateUpdated", monitorStateUpdated)
     
     def start(self):
-        self.hub_connection.start()
+        cont = True
+        firstException=True
+        while cont:
+            try:
+                self.hub_connection.start()
+                cont = False
+            except:
+                if firstException:
+                    print(f"Waiting to connect to server [{self.server_url}]")
+                    firstException=False
+                time.sleep(1)
     
     def stop(self):
         self.hub_connection.stop()

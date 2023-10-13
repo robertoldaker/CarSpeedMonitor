@@ -33,6 +33,16 @@ class DetectionDirection(IntEnum):
     LEFT_TO_RIGHT = 1
     RIGHT_TO_LEFT = 2
 
+class Logger:
+    def __init__(self,logger_hook) -> None:
+        self.logger_hook = logger_hook
+    
+    def logMessage(self,mess:str):
+        if self.logger_hook!=None:
+            self.logger_hook(mess)
+        else:
+            print(mess)
+
 class TrackingData(object):
     def __init__(self,abs_chg: int,secs: float,mph: float,x: int,width: int,image):
         self.abs_chg = abs_chg
@@ -84,7 +94,7 @@ class ObjectDetector(object):
     THRESHOLD = 25
     MIN_SAVE_BUFFER = 2
 
-    def __init__(self, min_area:int)->None:
+    def __init__(self, logger:Logger, min_area:int)->None:
         self.rect=(0,0,0,0)
         self.ncontours=0
         self._base_image = None
@@ -95,9 +105,10 @@ class ObjectDetector(object):
         self._adjusted_save_buffer=0
         self._lightlevel_time:Union[None,datetime.datetime]=None
         self._first_pass=True
+        self.logger=logger
             
     def update_base_image(self,gray)->None:
-        print("updating base_image")
+        self.logger.logMessage("updating base_image")
         # if the base image has not been defined, initialize it
         self._base_image = gray.copy().astype("float")    
 
@@ -151,7 +162,7 @@ class ObjectDetector(object):
         #self._adjusted_min_area = get_min_area(self._lightlevel)
         self._adjusted_threshold = get_threshold(self._lightlevel)
         self._adjusted_save_buffer = get_save_buffer(self._lightlevel)
-        print(f"LIGHT_LEVEL_UPDATE: (level={self._lightlevel}) (min_area={self._adjusted_min_area}) (threshold={self._adjusted_threshold}) (save_buffer={self._adjusted_save_buffer}))")
+        self.logger.logMessage(f"LIGHT_LEVEL_UPDATE: (level={self._lightlevel}) (min_area={self._adjusted_min_area}) (threshold={self._adjusted_threshold}) (save_buffer={self._adjusted_save_buffer}))")
         self._lightlevel_time=datetime.datetime.now()
         ###if ( self._last_lightlevel!=self._lightlevel):
         ###    self.update_base_image(gray)
@@ -251,7 +262,7 @@ class ObjectTracking(object):
 
     TOO_CLOSE=0.4
     DETECTION_STATE_TEXT={ DetectionState.WAITING: 'WAITING', DetectionState.TRACKING: 'TRACKING', DetectionState.SAVING: 'SAVING'}
-    def __init__(self,config: CarSpeedConfig,image_width: int,object_detector: ObjectDetector,moving_object_detected: Callable[[DetectionResult],None])->None:
+    def __init__(self,logger: Logger, config: CarSpeedConfig,image_width: int,object_detector: ObjectDetector,moving_object_detected: Callable[[DetectionResult],None])->None:
         #
         self.state = DetectionState.WAITING
         self.direction = DetectionDirection.UNKNOWN
@@ -268,10 +279,11 @@ class ObjectTracking(object):
         self._moving_object_detected=moving_object_detected
         ma = config.monitor_area
         self._monitored_width = ma.lower_right_x - ma.upper_left_x
-
         # work out ft per pixel in both directions
         self._l2r_ftperpixel = config.getL2RFrameWidthFt() / float(image_width)
         self._r2l_ftperpixel = config.getL2RFrameWidthFt() / float(image_width)
+        #
+        self.logger = logger
 
     # calculate elapsed seconds
     @staticmethod
@@ -305,16 +317,16 @@ class ObjectTracking(object):
         self.sd=0  #Initialise standard deviation
         
         self._counter = 0   # use to test later if saving with too few data points    
-        print("x-chg    Secs      MPH  x-pos width     BA  DIR Count")
+        self.logger.logMessage("x-chg    Secs      MPH  x-pos width     BA  DIR Count")
         if not self._cap_time == None:
             car_gap = ObjectTracking.secs_diff(self._initial_time, self._cap_time) 
-            print("initial time = "+str(self._initial_time) + " " + "cap_time =" + str(self._cap_time) + " gap= " +\
+            self.logger.logMessage("initial time = "+str(self._initial_time) + " " + "cap_time =" + str(self._cap_time) + " gap= " +\
                 str(car_gap) + " initial x= " + str(self._initial_x) + " initial_w= " + str(self._initial_w))
             # if gap between cars too low then probably seeing tail lights of current car
             #but I might need to tweek this if find I'm not catching fast cars
             if (car_gap<ObjectTracking.TOO_CLOSE):   
                 self.state = DetectionState.WAITING
-                print("too close")
+                self.logger.logMessage("too close")
     
     def check_tracking(self,frame_timestamp:datetime.datetime):
         # compute the elapsed time
@@ -328,7 +340,7 @@ class ObjectTracking(object):
         self.reset_tracking(False)
         # this forces a light level re-calc and base image refresh
         self._object_detector.reset()      
-        print('Resetting tracking and detector')
+        self.logger.logMessage('Resetting tracking and detector')
         return False
 
 
@@ -352,7 +364,7 @@ class ObjectTracking(object):
         self.speeds = np.append(self.speeds, mph)   #Append speed to array
 
         if mph < 0:
-            print("negative speed - stopping tracking"+ "{0:7.2f}".format(secs))
+            self.logger.logMessage("negative speed - stopping tracking"+ "{0:7.2f}".format(secs))
             if self.direction == DetectionDirection.LEFT_TO_RIGHT:
                 self.direction = DetectionDirection.RIGHT_TO_LEFT  #Reset correct direction
                 x=1  #Force save
@@ -360,7 +372,7 @@ class ObjectTracking(object):
                 self.direction = DetectionDirection.LEFT_TO_RIGHT  #Reset correct direction
                 x=self._monitored_width + ObjectDetector.MIN_SAVE_BUFFER  #Force save
         else:
-            print(f"{abs_chg:4d}  {secs:7.2f}  {mph:7.0f}   {x:4d}  {w:4d} {area:6d} {int(self.direction):4d} {self._counter:5d}")
+            self.logger.logMessage(f"{abs_chg:4d}  {secs:7.2f}  {mph:7.0f}   {x:4d}  {w:4d} {area:6d} {int(self.direction):4d} {self._counter:5d}")
             self.raw_tracking_data.append(TrackingData(abs_chg=abs_chg,secs=secs,mph=mph,x=x,width=w,image=image))
         
         # is front of object close to the exit of the monitored boundary? Then write date, time and speed on image
@@ -441,15 +453,14 @@ class CarSpeedMonitorState:
         self.jpg = jpg.data
         del(self.image)
 
-    
 class CarSpeedMonitor(object):
     
     WINDOW_NAME="Car Speed Monitor"
     def __init__(self, config: CarSpeedConfig) -> None:
         self.config = config
     
-    def start(self, detection_hook:Callable, preview_hook=None, show_preview=False):
-                
+    def start(self, detection_hook:Callable, preview_hook=None, logger_hook=None, show_preview=False):
+
         def annotate_main_image(result: DetectionResult):
             # timestamp the image - 
             cap_time = result.getCaptureTime()
@@ -471,9 +482,9 @@ class CarSpeedMonitor(object):
                 if detection_hook:
                     detection_hook(result)
                 # print json version to std out
-                print(f'CAR_DETECTED: ({result.mean_speed:.1f} mph) (sd={result.sd:.2f})')
+                logger.logMessage(f'CAR_DETECTED: ({result.mean_speed:.1f} mph) (sd={result.sd:.2f})')
             else:
-                print(f"Ignoring detection - speed [{result.mean_speed:.2f}] out of range [{min_speed_save}-{max_speed_save}]")
+                logger.logMessage(f"Ignoring detection - speed [{result.mean_speed:.2f}] out of range [{min_speed_save}-{max_speed_save}]")
 
             
 
@@ -513,13 +524,13 @@ class CarSpeedMonitor(object):
             if detection_enabled:
                 object_tracking.update_state(found_object,object_detector.rect,image,frame_timestamp)
             # show the frame
-            if show_preview or preview_hook!=None:
+            if show_preview:
                 annotate_image_for_preview()
-                if show_preview:
-                    cv2.imshow(CarSpeedMonitor.WINDOW_NAME, image)
-                if preview_hook!=None:
-                    state=CarSpeedMonitorState(image, object_tracking.getStateStr(),frame_rate,detection_enabled,int(num_contours))
-                    preview_hook(state)
+                cv2.imshow(CarSpeedMonitor.WINDOW_NAME, image)
+
+            if preview_hook!=None:
+                state=CarSpeedMonitorState(image, object_tracking.getStateStr(),frame_rate,detection_enabled,int(num_contours))
+                preview_hook(state)
 
         def on_key_press(key):
             nonlocal cont, detection_enabled 
@@ -534,7 +545,9 @@ class CarSpeedMonitor(object):
                 # reset 
                 if char == "r":
                     object_tracking.reset()
-                
+
+        #
+        logger = Logger(logger_hook)
 
         # store local variables from config
         ma = self.config.monitor_area
@@ -576,8 +589,8 @@ class CarSpeedMonitor(object):
         min_width=5/(self.config.getL2RFrameWidthFt())*camera.image_width
         min_area=min_width*min_width
 
-        object_detector = ObjectDetector(int(min_area))
-        object_tracking = ObjectTracking(self.config,camera.image_width,object_detector,moving_object_detected)
+        object_detector = ObjectDetector(logger,int(min_area))
+        object_tracking = ObjectTracking(logger,self.config,camera.image_width,object_detector,moving_object_detected)
         
         frame_rate:float=0
         detection_enabled:bool = True
@@ -601,20 +614,17 @@ class CarSpeedMonitor(object):
                 num_contours=total_contours/50
                 total_contours=0
                 st=time.monotonic()
-                if not show_preview:
-                    print(f'Frame rate={frame_rate:3.0f}, avg. contours={num_contours:3.0f}      ',end="\r")
+                #if not show_preview:
+                #    print(f'Frame rate={frame_rate:3.0f}, avg. contours={num_contours:3.0f}      ',end="\r")
 
             # needed to ensure the images in the preview window get updated
             if show_preview:
                 key = cv2.waitKey(1) & 0xFF
             #
         
-        print("Quitting ...")
+        logger.logMessage("Quitting ...")
         # cleanup the camera and close any open windows
         cv2.destroyAllWindows()
 
-
-
-    
 
     

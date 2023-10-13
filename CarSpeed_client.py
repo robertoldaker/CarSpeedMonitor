@@ -17,9 +17,10 @@ from signalrcore.protocol.messagepack_protocol import MessagePackHubProtocol
 import logging
 
 class DetectionUploader:
-    def __init__(self):
+    def __init__(self,rootUrl:str):
         self.uploadQueue = Queue()
-        self.process = Process(target=DetectionUploader.uploadWorker,args=[self.uploadQueue,])
+        self.rootUrl = rootUrl
+        self.process = Process(target=DetectionUploader.uploadWorker,args=[self.uploadQueue,rootUrl,])
         self.process.start()
     
     def upload(self,result: DetectionResult):
@@ -57,13 +58,13 @@ class DetectionUploader:
         return zipFilename
 
     @staticmethod
-    def uploadZipfile(fn):
+    def uploadZipfile(fn,rootUrl: str):
         # upload to website
         uploaded = False
         with open(fn, 'rb') as f:
             files = {"file": f}
             try:
-                r = requests.post("http://odin.local:5030/Detections/Upload", files=files)
+                r = requests.post(f"{rootUrl}/Detections/Upload", files=files)
                 if r.status_code==200:
                     uploaded = True
                 else:
@@ -74,31 +75,22 @@ class DetectionUploader:
             os.remove(fn)
         
     @staticmethod
-    def _uploadWorker(q: Queue):
-        for fn in iter(q.get, 'STOP'):
-            print(fn)
-
-    @staticmethod
-    def uploadWorker(q: Queue):
+    def uploadWorker(q: Queue, rootUrl: str):
         for dr in iter(q.get, 'STOP'):
-            st:float = time.monotonic()
             fn = DetectionUploader.saveZipfile(dr)
-            DetectionUploader.uploadZipfile(fn)
-            ft=time.monotonic()
-            print(f"Uploaded detection in {(ft-st):6.3f}s")
+            DetectionUploader.uploadZipfile(fn,rootUrl)
         print('Upload queue stopped')
 
 class PreviewUploader:
-    def __init__(self):
+    def __init__(self,rootUrl:str):
         self.uploadQueue = Queue()
-        self.process = Process(target=PreviewUploader.uploadWorker,args=[self.uploadQueue,])
+        self.process = Process(target=PreviewUploader.uploadWorker,args=[self.uploadQueue,rootUrl,])
         self.process.start()
     
-    def upload(self,result:CarSpeedMonitorState):
+    def uploadPreview(self,result:CarSpeedMonitorState):
         if self.uploadQueue.empty():
             self.uploadQueue.put(result)
         else:
-            #print('ignored preview waiting for upload slot')
             pass
     
     def stop(self):
@@ -110,19 +102,38 @@ class PreviewUploader:
             print(fn)
 
     @staticmethod
-    def uploadWorker(q: Queue):
-        signalRHandler = SignalRHandler()
+    def uploadWorker(q: Queue,rootUrl:str):
+        signalRHandler = SignalRHandler(rootUrl)
         signalRHandler.start()
         for state in iter(q.get, 'STOP'):
             st:float = time.monotonic()
-            #try:
             state.generateJpg()
             signalRHandler.uploadPreview(state)
             ft=time.monotonic()
-            #print(f"Uploaded preview in {(ft-st):6.3f}s [{len(jpg)}]")
-            #except:
-            #    print('Exception in uploadWorker')
         print('Upload queue stopped')
+        signalRHandler.stop()
+        print('signalRhandler stopped')
+
+class MessageUploader:
+    def __init__(self,rootUrl:str):
+        self.uploadQueue = Queue()
+        self.process = Process(target=MessageUploader.uploadWorker,args=[self.uploadQueue,rootUrl,])
+        self.process.start()
+        
+    def uploadMessage(self,mess:str):
+        self.uploadQueue.put(mess)
+
+    def stop(self):
+        self.uploadQueue.put('STOP')
+            
+    @staticmethod
+    def uploadWorker(q: Queue,rootUrl:str):
+        signalRHandler = SignalRHandler(rootUrl)
+        signalRHandler.start()
+        for state in iter(q.get, 'STOP'):
+            signalRHandler.logMessage(state)
+            ft=time.monotonic()
+        print('Upload message queue stopped')
         signalRHandler.stop()
         print('signalRhandler stopped')
 
@@ -132,7 +143,10 @@ def main():
         detectionUploader.upload(result)
 
     def preview_available(state:CarSpeedMonitorState):
-        previewUploader.upload(state)
+        previewUploader.uploadPreview(state)
+    
+    def logMessage(mess: str):
+        messageUploader.uploadMessage(mess)
 
     ap = argparse.ArgumentParser(description="Monitors car speed using raspberry pi camera")
     ap.add_argument("--file","-f", default=CarSpeedConfig.DEF_CONFIG_FILE, help="Filename to store config")
@@ -140,9 +154,11 @@ def main():
     args = vars(ap.parse_args())
 
     show_preview = args["preview"]
+    rootUrl = 'http://odin.local:5030'
 
-    detectionUploader = DetectionUploader()
-    previewUploader = PreviewUploader()
+    detectionUploader = DetectionUploader(rootUrl)
+    previewUploader = PreviewUploader(rootUrl)
+    messageUploader = MessageUploader(rootUrl)
 
     # open config
     config = CarSpeedConfig.fromDefJsonFile()
@@ -151,7 +167,7 @@ def main():
     # start the monitor
     if config!=None:
         proc = CarSpeedMonitor(config)
-        proc.start(detection_hook=car_detected,preview_hook=preview_available,show_preview=show_preview)
+        proc.start(detection_hook=car_detected,preview_hook=preview_available,logger_hook=logMessage,show_preview=show_preview)
         detectionUploader.stop()
         print('detection uploader stopped')
         previewUploader.stop()
