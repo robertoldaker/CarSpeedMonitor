@@ -1,5 +1,6 @@
+import signal
 import threading
-from CarSpeedMonitor import CarSpeedMonitor, CarSpeedMonitorState, DetectionResult
+from CarSpeedMonitor import CarSpeedMonitor, CarSpeedMonitorState, Commands, DetectionResult
 from CarSpeedConfig import CarSpeedConfig
 from SignalRHandler import SignalRHandler
 from datetime import date
@@ -79,7 +80,6 @@ class DetectionUploader:
         for dr in iter(q.get, 'STOP'):
             fn = DetectionUploader.saveZipfile(dr)
             DetectionUploader.uploadZipfile(fn,rootUrl)
-        print('Upload queue stopped')
 
 class PreviewUploader:
     def __init__(self,rootUrl:str):
@@ -110,9 +110,7 @@ class PreviewUploader:
             state.generateJpg()
             signalRHandler.uploadPreview(state)
             ft=time.monotonic()
-        print('Upload queue stopped')
         signalRHandler.stop()
-        print('signalRhandler stopped')
 
 class MessageUploader:
     def __init__(self,rootUrl:str):
@@ -133,11 +131,18 @@ class MessageUploader:
         for state in iter(q.get, 'STOP'):
             signalRHandler.logMessage(state)
             ft=time.monotonic()
-        print('Upload message queue stopped')
         signalRHandler.stop()
-        print('signalRhandler stopped')
 
 def main():
+
+    def processCommand():
+        nonlocal command
+        if command!=Commands.CONTINUE:            
+            newCommand = command
+            command = Commands.CONTINUE
+            return newCommand
+        else:
+            return Commands.CONTINUE
 
     def car_detected(result: DetectionResult):
         detectionUploader.upload(result)
@@ -147,31 +152,96 @@ def main():
     
     def logMessage(mess: str):
         messageUploader.uploadMessage(mess)
+    
+    def start():
+        nonlocal running
+        while(not exitProgram):
+            running = True
+            proc.start(detection_hook=car_detected,command_hook=processCommand,preview_hook=preview_available,logger_hook=logMessage,show_preview=False)
+            running=False
+            if not exitProgram:
+                notRunningEvent.wait()
+                notRunningEvent.clear()
 
-    ap = argparse.ArgumentParser(description="Monitors car speed using raspberry pi camera")
+    def signal_handler(sig, frame):
+        # this should allow us to exit gracefully        
+        nonlocal exitProgram, command
+        # exception check needed since this get called for each of the 4 processes
+        # and running does not exists in those contexts
+        try:
+            exitProgram=True
+            if running:
+                command=Commands.EXIT
+            else:
+                notRunningEvent.set()
+            print('Exiting ....')
+        except NameError:
+            pass
+
+
+    def startMonitor(args):
+        notRunningEvent.set()        
+
+    def stopMonitor(args):
+        nonlocal command
+        if running:
+            command = Commands.EXIT
+
+    def toggleDetection(args):
+        nonlocal command
+        if running:
+            command = Commands.TOGGLE_DETECTION
+
+    def resetTracking(args):
+        nonlocal command
+        if running:
+            command = Commands.RESET_TRACKING 
+
+    # set up SIGINT handler (for ctrl-c) so we can exit gracefully
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    ap = argparse.ArgumentParser(description="Car speed monitor client")
     ap.add_argument("--file","-f", default=CarSpeedConfig.DEF_CONFIG_FILE, help="Filename to store config")
-    ap.add_argument("--preview","-p", action='store_true', help="Create preview window")
+    ap.add_argument("--server","-s", default="production", help="Server to use")
     args = vars(ap.parse_args())
 
-    show_preview = args["preview"]
-    rootUrl = 'http://odin.local:5030'
+    server = args["server"]
+    if ( server == 'production'):
+        rootUrl = 'http://odin.local:5030'
+    else:
+        rootUrl = 'http://ser5.local:5174' 
+
+    print(f"Car speed monitor client, configured with url [{rootUrl}]")
 
     detectionUploader = DetectionUploader(rootUrl)
     previewUploader = PreviewUploader(rootUrl)
     messageUploader = MessageUploader(rootUrl)
+    command = Commands.CONTINUE
+    exitProgram = False
+    running = False
+    inSigHandler = False;
+    notRunningEvent = threading.Event()
 
     # open config
     config = CarSpeedConfig.fromDefJsonFile()
+    if config==None:
+        print(f"No config file found - please run \"CarSpeed_configure.py\" to generate the json file")
+        exit(1)
 
-    
+    signalRHandler = SignalRHandler(rootUrl)
+    signalRHandler.start()
+    signalRHandler.hub_connection.on("StartMonitor", startMonitor)
+    signalRHandler.hub_connection.on("StopMonitor", stopMonitor)
+    signalRHandler.hub_connection.on("ToggleDetection", toggleDetection)
+    signalRHandler.hub_connection.on("ResetTracking", resetTracking)
+
     # start the monitor
-    if config!=None:
-        proc = CarSpeedMonitor(config)
-        proc.start(detection_hook=car_detected,preview_hook=preview_available,logger_hook=logMessage,show_preview=show_preview)
-        detectionUploader.stop()
-        print('detection uploader stopped')
-        previewUploader.stop()
-        print('preview uploader stopped')
+    proc = CarSpeedMonitor(config)
+    start()
+    detectionUploader.stop()
+    previewUploader.stop()
+    messageUploader.stop()
+    signalRHandler.stop()
 
 if __name__ == '__main__':
     main()

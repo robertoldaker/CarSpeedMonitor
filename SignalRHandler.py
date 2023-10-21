@@ -22,11 +22,11 @@ class SignalRHandler:
 
         def onOpen():
             self.connected=True
-            print(f"connection opened [{self.server_url}]")
+            print(f"Connection opened [{self.server_url}]")
 
         def onClose():
             self.connected=False
-            print("connection closed")
+            print("Connection closed")
 
         self.hub_connection.on_open(onOpen)
         self.hub_connection.on_close(onClose)

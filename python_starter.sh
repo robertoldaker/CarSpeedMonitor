@@ -18,7 +18,7 @@ showme() {
     pgrep -f $PROGRAM_FILE
 }
 
-case "$1" in 
+case "$2" in 
     start)   startme ;;
     stop)    stopme ;;
     show)    showme ;;

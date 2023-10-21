@@ -4,11 +4,12 @@ import pathlib
 import subprocess
 
 # Determine is we are running in Raspbian
-process = subprocess.run(['cat','/etc/os-release'], capture_output=True, check=True, text=True)
-if 'Raspbian' in process.stdout:
-    IsRaspbian = True    
-else:
-    IsRaspbian = False
+#process = subprocess.run(['cat','/etc/os-release'], capture_output=True, check=True, text=True)
+#if 'Raspbian' in process.stdout:
+#    IsRaspbian = True    
+#else:
+#    IsRaspbian = False
+IsRaspbian = True
 
 # load a dummy ConfigureMonitorArea if testing this on non-raspbian OS
 if ( IsRaspbian):

@@ -1,4 +1,5 @@
 from typing import Callable, List, Tuple, Union
+
 from CarSpeedConfig import CarSpeedConfig
 # import the necessary packages
 from picamera2 import Picamera2
@@ -26,6 +27,11 @@ class DetectionState(IntEnum):
     TRACKING=1
     SAVING=2
 
+class Commands(IntEnum):
+    CONTINUE=0
+    EXIT=1
+    TOGGLE_DETECTION=2
+    RESET_TRACKING=3
 
 # Current detection direction
 class DetectionDirection(IntEnum):
@@ -108,7 +114,6 @@ class ObjectDetector(object):
         self.logger=logger
             
     def update_base_image(self,gray)->None:
-        self.logger.logMessage("updating base_image")
         # if the base image has not been defined, initialize it
         self._base_image = gray.copy().astype("float")    
 
@@ -162,7 +167,7 @@ class ObjectDetector(object):
         #self._adjusted_min_area = get_min_area(self._lightlevel)
         self._adjusted_threshold = get_threshold(self._lightlevel)
         self._adjusted_save_buffer = get_save_buffer(self._lightlevel)
-        self.logger.logMessage(f"LIGHT_LEVEL_UPDATE: (level={self._lightlevel}) (min_area={self._adjusted_min_area}) (threshold={self._adjusted_threshold}) (save_buffer={self._adjusted_save_buffer}))")
+        print(f"LIGHT_LEVEL_UPDATE: (level={self._lightlevel}) (min_area={self._adjusted_min_area}) (threshold={self._adjusted_threshold}) (save_buffer={self._adjusted_save_buffer}))")
         self._lightlevel_time=datetime.datetime.now()
         ###if ( self._last_lightlevel!=self._lightlevel):
         ###    self.update_base_image(gray)
@@ -257,6 +262,9 @@ class CarSpeedCamera(object):
         self.picam.stop()
         self.picam.configure(self.config)
         self.picam.start()
+
+    def stop(self):
+        self.picam.stop()
         
 class ObjectTracking(object):
 
@@ -441,13 +449,14 @@ class ObjectTracking(object):
         return ObjectTracking.DETECTION_STATE_TEXT[self.state]
     
 class CarSpeedMonitorState:
-    def __init__(self,image,state:str, frameRate:float, detectionEnabled: bool, avgContours: int) -> None:
+    def __init__(self,image,state:str, frameRate:float, detectionEnabled: bool, avgContours: int, lightLevel: float) -> None:
         self.image=image.copy()
         self.state=state
         self.frameRate=frameRate
         self.detectionEnabled=detectionEnabled
         self.avgContours=avgContours
-    
+        self.lightLevel=lightLevel
+  
     def generateJpg(self):
         (result,jpg) = cv2.imencode('.jpg', self.image)
         self.jpg = jpg.data
@@ -458,8 +467,9 @@ class CarSpeedMonitor(object):
     WINDOW_NAME="Car Speed Monitor"
     def __init__(self, config: CarSpeedConfig) -> None:
         self.config = config
+        self.camera = CarSpeedCamera(self.config.h_flip,self.config.v_flip)
     
-    def start(self, detection_hook:Callable, preview_hook=None, logger_hook=None, show_preview=False):
+    def start(self, detection_hook:Callable, preview_hook=None, logger_hook=None, command_hook=None, show_preview=False):
 
         def annotate_main_image(result: DetectionResult):
             # timestamp the image - 
@@ -528,8 +538,12 @@ class CarSpeedMonitor(object):
                 annotate_image_for_preview()
                 cv2.imshow(CarSpeedMonitor.WINDOW_NAME, image)
 
+            run_preview_hook()
+
+        def run_preview_hook():
             if preview_hook!=None:
-                state=CarSpeedMonitorState(image, object_tracking.getStateStr(),frame_rate,detection_enabled,int(num_contours))
+                stateStr = object_tracking.getStateStr() if cont else "IDLE"
+                state=CarSpeedMonitorState(image, stateStr ,frame_rate,detection_enabled,int(num_contours),object_detector._lightlevel)
                 preview_hook(state)
 
         def on_key_press(key):
@@ -560,10 +574,9 @@ class CarSpeedMonitor(object):
 
         # initialize the camera. Adjust vflip and hflip to reflect your camera's orientation
         # allow the camera to warm up
-        camera = CarSpeedCamera(self.config.h_flip,self.config.v_flip)
-        image_width = camera.image_width
-        image_height = camera.image_height
-        camera.start()
+        image_width = self.camera.image_width
+        image_height = self.camera.image_height
+        self.camera.start()
         time.sleep(0.9)
 
         # create an image window and place it in the upper left corner of the screen
@@ -584,13 +597,13 @@ class CarSpeedMonitor(object):
             nonlocal frame_timestamp
             frame_timestamp = datetime.datetime.now()
         
-        camera.picam.pre_callback = pre_capture_callback
+        self.camera.picam.pre_callback = pre_capture_callback
         # min width in pixels of a car
-        min_width=5/(self.config.getL2RFrameWidthFt())*camera.image_width
+        min_width=5/(self.config.getL2RFrameWidthFt())*self.camera.image_width
         min_area=min_width*min_width
 
         object_detector = ObjectDetector(logger,int(min_area))
-        object_tracking = ObjectTracking(logger,self.config,camera.image_width,object_detector,moving_object_detected)
+        object_tracking = ObjectTracking(logger,self.config,self.camera.image_width,object_detector,moving_object_detected)
         
         frame_rate:float=0
         detection_enabled:bool = True
@@ -599,9 +612,10 @@ class CarSpeedMonitor(object):
         num_contours:float=0
         st:float = time.monotonic()
         #
+        logger.logMessage("Monitor started")
         while cont:
             # grab the raw NumPy array representing the image 
-            image = camera.picam.capture_array('main')
+            image = self.camera.picam.capture_array('main')
             # crop area defined by detection areat defined in the config
             cropped_image = image[upper_left_y:lower_right_y,upper_left_x:lower_right_x]
             process_image()
@@ -620,11 +634,21 @@ class CarSpeedMonitor(object):
             # needed to ensure the images in the preview window get updated
             if show_preview:
                 key = cv2.waitKey(1) & 0xFF
-            #
-        
-        logger.logMessage("Quitting ...")
+            # process commands from the command hook
+            if command_hook:
+                command = command_hook()
+                if command == Commands.EXIT:
+                    cont=False
+                elif command == Commands.RESET_TRACKING:
+                    object_tracking.reset()
+                elif command == Commands.TOGGLE_DETECTION:
+                    detection_enabled = not detection_enabled
+
+        run_preview_hook()            
+        self.camera.stop()
         # cleanup the camera and close any open windows
         cv2.destroyAllWindows()
+        logger.logMessage("Monitor stopped")
 
 
     
