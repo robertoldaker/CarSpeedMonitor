@@ -262,6 +262,11 @@ class CarSpeedCamera(object):
         self.picam.stop()
         self.picam.configure(self.config)
         self.picam.start()
+    
+    def set_flip(self,h_flip: bool, v_flip: bool):
+        self.h_flip = self.config['transform'].hflip = h_flip
+        self.v_flip = self.config['transform'].vflip = v_flip
+        self.picam.configure(self.config)
 
     def stop(self):
         self.picam.stop()
@@ -569,7 +574,7 @@ class CarSpeedMonitor(object):
         upper_left_y = ma.upper_left_y
         lower_right_x = ma.lower_right_x
         lower_right_y = ma.lower_right_y
-        min_speed_save = self.config.min_speed_image
+        min_speed_save = self.config.min_speed_save
         max_speed_save = self.config.max_speed_save
 
         # initialize the camera. Adjust vflip and hflip to reflect your camera's orientation
@@ -649,6 +654,10 @@ class CarSpeedMonitor(object):
         # cleanup the camera and close any open windows
         cv2.destroyAllWindows()
         logger.logMessage("Monitor stopped")
+    
+    def setConfig(self, config: CarSpeedConfig):
+        self.config = config
+        self.camera.set_flip(config.h_flip,config.v_flip)
 
 
     

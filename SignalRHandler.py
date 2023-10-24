@@ -4,7 +4,8 @@ import logging
 import time
 
 class SignalRHandler:
-    def __init__(self,server_root,debugLogging=False):
+    def __init__(self,server_root,onConnection=None,debugLogging=False):
+        self.onConnection = onConnection
         self.connected = False
         self.server_url=f'{server_root}/NotificationHub'
         builder= HubConnectionBuilder()\
@@ -22,10 +23,14 @@ class SignalRHandler:
 
         def onOpen():
             self.connected=True
+            if self.onConnection:
+                self.onConnection(self.connected)
             print(f"Connection opened [{self.server_url}]")
 
         def onClose():
             self.connected=False
+            if self.onConnection:
+                self.onConnection(self.connected)
             print("Connection closed")
 
         self.hub_connection.on_open(onOpen)
@@ -60,4 +65,12 @@ class SignalRHandler:
             self.hub_connection.send(
                 "LogMessage", # Method
                 [mess], # Params
-            )            
+            ) 
+
+    def uploadConfig(self,config):
+        print(f'UploadConfig')
+        print(config)
+        if self.connected:
+            print(f'Sending monito config')
+            monitorConfig = config.shortDict()
+            self.hub_connection.send("MonitorConfig",[monitorConfig])

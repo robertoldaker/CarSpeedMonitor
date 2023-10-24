@@ -26,7 +26,7 @@ class CarSpeedConfig(object):
         self.h_flip = False
         self.v_flip = False
         self.monitor_area = MonitorArea()
-        if  data:
+        if data:
             self.__dict__ = data   
             
     def getL2RFrameWidthFt(self)->float:
@@ -44,7 +44,7 @@ class CarSpeedConfig(object):
         with open(file,"r") as f:
             return json.load(f, object_hook=CarSpeedConfig._objectHook)
     @staticmethod
-    def fromJsonStr(str:str)->str:
+    def fromJsonStr(str:str):
         return json.loads(str, object_hook=CarSpeedConfig._objectHook)
     @staticmethod
     def fromDefJsonFile():
@@ -63,3 +63,23 @@ class CarSpeedConfig(object):
                 return CarSpeedConfig(dict)
             elif (class_name=='MonitorArea'):            
                 return MonitorArea(dict)
+    
+    def shortDict(self):
+        config={'l2r_distance': self.l2r_distance,\
+                'r2l_distance': self.r2l_distance,\
+                'min_speed_image': self.min_speed_image,\
+                'min_speed_save': self.min_speed_save,\
+                'max_speed_save': self.max_speed_save,\
+                'field_of_view': self.field_of_view,\
+                'h_flip': self.h_flip,\
+                'v_flip': self.v_flip}
+        return config
+    
+    def isMonitorAreaDefined(self)->bool:
+        if not self.monitor_area:
+            return False
+        elif self.monitor_area.upper_left_x==0 and self.monitor_area.upper_left_y==0\
+                and self.monitor_area.lower_right_x==0 and self.monitor_area.lower_right_y==0:
+            return False
+        else:
+            return True

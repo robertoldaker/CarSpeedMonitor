@@ -155,8 +155,9 @@ def main():
     
     def start():
         nonlocal running
-        while(not exitProgram):
+        while(not exitProgram and config):
             running = True
+            proc.setConfig(config)
             proc.start(detection_hook=car_detected,command_hook=processCommand,preview_hook=preview_available,logger_hook=logMessage,show_preview=False)
             running=False
             if not exitProgram:
@@ -169,6 +170,7 @@ def main():
         # exception check needed since this get called for each of the 4 processes
         # and running does not exists in those contexts
         try:
+            hubConnectionEvent.set()
             exitProgram=True
             if running:
                 command=Commands.EXIT
@@ -196,12 +198,53 @@ def main():
         nonlocal command
         if running:
             command = Commands.RESET_TRACKING 
+    
+    def configEdited(args):
+        nonlocal config
+        try:
+            # load config from db
+            config = loadConfig()
+            stopMonitor(None)
+            startMonitor(None)
+        except Exception as e:
+            print("Error loading config from db")
+            print(e.args)
+            signalRHandler.logMessage(e.args)
+    
+    def horFlip(args):
+        signalRHandler.logMessage(f'HorFlip {args}')
+
+    def verFlip(args):
+        signalRHandler.logMessage(f'VerFlip {args}')
+
+    def getConfig():        
+        try:
+            # load config from db
+            config = loadConfig()
+            return config
+        except Exception as e:
+            print(f'error loading config [{e.args[0]}]')
+            signalRHandler.logMessage(e.args[0])
+
+    def loadConfig()->CarSpeedConfig:
+        r = requests.get(f"{rootUrl}/Monitor/Config")
+        if r.status_code==200:
+            newConfig = CarSpeedConfig.fromJsonStr(r.text)
+            if not newConfig:
+                raise Exception("Could not parse config")
+        else:
+            raise Exception(f"Invalid status code downloading new config [{r.status_code}]")
+        return newConfig
+    
+    def onConnection(connected)->None:
+        if connected:
+            print('Connected to hub')
+            hubConnectionEvent.set()
 
     # set up SIGINT handler (for ctrl-c) so we can exit gracefully
     signal.signal(signal.SIGINT, signal_handler)
     
     ap = argparse.ArgumentParser(description="Car speed monitor client")
-    ap.add_argument("--file","-f", default=CarSpeedConfig.DEF_CONFIG_FILE, help="Filename to store config")
     ap.add_argument("--server","-s", default="production", help="Server to use")
     args = vars(ap.parse_args())
 
@@ -219,25 +262,30 @@ def main():
     command = Commands.CONTINUE
     exitProgram = False
     running = False
-    inSigHandler = False;
     notRunningEvent = threading.Event()
+    hubConnectionEvent = threading.Event()
 
-    # open config
-    config = CarSpeedConfig.fromDefJsonFile()
-    if config==None:
-        print(f"No config file found - please run \"CarSpeed_configure.py\" to generate the json file")
-        exit(1)
-
-    signalRHandler = SignalRHandler(rootUrl)
-    signalRHandler.start()
+    signalRHandler = SignalRHandler(rootUrl,debugLogging=False)
+    signalRHandler.onConnection = onConnection
     signalRHandler.hub_connection.on("StartMonitor", startMonitor)
     signalRHandler.hub_connection.on("StopMonitor", stopMonitor)
     signalRHandler.hub_connection.on("ToggleDetection", toggleDetection)
     signalRHandler.hub_connection.on("ResetTracking", resetTracking)
+    signalRHandler.hub_connection.on("MonitorConfigEdited", configEdited)
+    signalRHandler.hub_connection.on("HorFlip", horFlip)
+    signalRHandler.hub_connection.on("VerFlip", verFlip)
+    signalRHandler.start()
+    #
+    print('Waiting for hub connection ...')
+    hubConnectionEvent.wait()
+    if not exitProgram:
+        # set new config
+        config = getConfig()
+        # start
+        if config:
+            proc = CarSpeedMonitor(config)
+            start()
 
-    # start the monitor
-    proc = CarSpeedMonitor(config)
-    start()
     detectionUploader.stop()
     previewUploader.stop()
     messageUploader.stop()
