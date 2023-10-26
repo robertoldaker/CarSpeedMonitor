@@ -2,13 +2,16 @@ import logging
 from typing import Callable
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 from signalrcore.protocol.messagepack_protocol import MessagePackHubProtocol
+import platform
 
 class SignalRHandler:
-    def __init__(self):
+    def __init__(self, name):
         #        .configure_logging(logging.DEBUG)\
         server_url = "http://localhost:5174/NotificationHub"
         self.hub_connection = HubConnectionBuilder()\
-        .with_url(server_url)\
+        .with_url(server_url, options={
+            "headers": {"monitor-name": name}
+        })\
         .with_hub_protocol(MessagePackHubProtocol())\
         .with_automatic_reconnect({
             "type": "raw",
@@ -56,8 +59,10 @@ def messageReceived(args):
     print("message received!!!")
 
 def main():
+    computerName = platform.node()
+    print(f'name={computerName}')
     key = None
-    sigr = SignalRHandler()
+    sigr = SignalRHandler(computerName)
     sigr.start()
     while key != "e":        
         key = input(">> ")

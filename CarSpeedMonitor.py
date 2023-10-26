@@ -79,6 +79,7 @@ class DetectionResult(object):
         self.inExitZone=inExitZone
         self.tracking_data=tracking_data
         self.image=None
+        self.configId=0
     
     @staticmethod    
     def _jsonDict(o: object)->dict:

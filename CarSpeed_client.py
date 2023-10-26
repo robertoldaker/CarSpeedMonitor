@@ -1,3 +1,4 @@
+import platform
 import signal
 import threading
 from CarSpeedMonitor import CarSpeedMonitor, CarSpeedMonitorState, Commands, DetectionResult
@@ -18,10 +19,10 @@ from signalrcore.protocol.messagepack_protocol import MessagePackHubProtocol
 import logging
 
 class DetectionUploader:
-    def __init__(self,rootUrl:str):
+    def __init__(self,rootUrl:str,configId:int):
         self.uploadQueue = Queue()
         self.rootUrl = rootUrl
-        self.process = Process(target=DetectionUploader.uploadWorker,args=[self.uploadQueue,rootUrl,])
+        self.process = Process(target=DetectionUploader.uploadWorker,args=[self.uploadQueue,rootUrl,])        
         self.process.start()
     
     def upload(self,result: DetectionResult):
@@ -82,9 +83,9 @@ class DetectionUploader:
             DetectionUploader.uploadZipfile(fn,rootUrl)
 
 class PreviewUploader:
-    def __init__(self,rootUrl:str):
+    def __init__(self,rootUrl:str,monitorName:str):
         self.uploadQueue = Queue()
-        self.process = Process(target=PreviewUploader.uploadWorker,args=[self.uploadQueue,rootUrl,])
+        self.process = Process(target=PreviewUploader.uploadWorker,args=[self.uploadQueue,rootUrl,monitorName,])
         self.process.start()
     
     def uploadPreview(self,result:CarSpeedMonitorState):
@@ -102,8 +103,8 @@ class PreviewUploader:
             print(fn)
 
     @staticmethod
-    def uploadWorker(q: Queue,rootUrl:str):
-        signalRHandler = SignalRHandler(rootUrl)
+    def uploadWorker(q: Queue,rootUrl:str,monitorName:str):
+        signalRHandler = SignalRHandler(rootUrl,monitorName)
         signalRHandler.start()
         for state in iter(q.get, 'STOP'):
             st:float = time.monotonic()
@@ -113,9 +114,9 @@ class PreviewUploader:
         signalRHandler.stop()
 
 class MessageUploader:
-    def __init__(self,rootUrl:str):
+    def __init__(self,rootUrl:str,monitorName:str):
         self.uploadQueue = Queue()
-        self.process = Process(target=MessageUploader.uploadWorker,args=[self.uploadQueue,rootUrl,])
+        self.process = Process(target=MessageUploader.uploadWorker,args=[self.uploadQueue,rootUrl,monitorName,])
         self.process.start()
         
     def uploadMessage(self,mess:str):
@@ -125,8 +126,8 @@ class MessageUploader:
         self.uploadQueue.put('STOP')
             
     @staticmethod
-    def uploadWorker(q: Queue,rootUrl:str):
-        signalRHandler = SignalRHandler(rootUrl)
+    def uploadWorker(q: Queue,rootUrl:str,monitorName:str):
+        signalRHandler = SignalRHandler(rootUrl,monitorName)
         signalRHandler.start()
         for state in iter(q.get, 'STOP'):
             signalRHandler.logMessage(state)
@@ -145,13 +146,17 @@ def main():
             return Commands.CONTINUE
 
     def car_detected(result: DetectionResult):
-        detectionUploader.upload(result)
+        if detectionUploader and config:
+            result.configId=config.id
+            detectionUploader.upload(result)
 
     def preview_available(state:CarSpeedMonitorState):
-        previewUploader.uploadPreview(state)
+        if previewUploader:
+            previewUploader.uploadPreview(state)
     
     def logMessage(mess: str):
-        messageUploader.uploadMessage(mess)
+        if messageUploader:
+            messageUploader.uploadMessage(mess)
     
     def start():
         nonlocal running
@@ -165,6 +170,9 @@ def main():
                 notRunningEvent.clear()
 
     def signal_handler(sig, frame):
+        startExit()
+    
+    def startExit():
         # this should allow us to exit gracefully        
         nonlocal exitProgram, command
         # exception check needed since this get called for each of the 4 processes
@@ -179,7 +187,6 @@ def main():
             print('Exiting ....')
         except NameError:
             pass
-
 
     def startMonitor(args):
         notRunningEvent.set()        
@@ -199,6 +206,16 @@ def main():
         if running:
             command = Commands.RESET_TRACKING 
     
+    def shutdown(args):
+        nonlocal shutdownOnExit
+        shutdownOnExit=True
+        startExit()
+
+    def reboot(args):
+        nonlocal rebootOnExit
+        rebootOnExit=True
+        startExit()
+
     def configEdited(args):
         nonlocal config
         try:
@@ -211,12 +228,6 @@ def main():
             print(e.args)
             signalRHandler.logMessage(e.args)
     
-    def horFlip(args):
-        signalRHandler.logMessage(f'HorFlip {args}')
-
-    def verFlip(args):
-        signalRHandler.logMessage(f'VerFlip {args}')
-
     def getConfig():        
         try:
             # load config from db
@@ -227,7 +238,7 @@ def main():
             signalRHandler.logMessage(e.args[0])
 
     def loadConfig()->CarSpeedConfig:
-        r = requests.get(f"{rootUrl}/Monitor/Config")
+        r = requests.get(f"{rootUrl}/Monitor/Config",params={'monitorName': monitorName})
         if r.status_code==200:
             newConfig = CarSpeedConfig.fromJsonStr(r.text)
             if not newConfig:
@@ -238,7 +249,6 @@ def main():
     
     def onConnection(connected)->None:
         if connected:
-            print('Connected to hub')
             hubConnectionEvent.set()
 
     # set up SIGINT handler (for ctrl-c) so we can exit gracefully
@@ -256,24 +266,27 @@ def main():
 
     print(f"Car speed monitor client, configured with url [{rootUrl}]")
 
-    detectionUploader = DetectionUploader(rootUrl)
-    previewUploader = PreviewUploader(rootUrl)
-    messageUploader = MessageUploader(rootUrl)
+    detectionUploader=None
+    previewUploader=None
+    messageUploader=None
     command = Commands.CONTINUE
     exitProgram = False
+    shutdownOnExit=False
+    rebootOnExit=False
     running = False
     notRunningEvent = threading.Event()
     hubConnectionEvent = threading.Event()
 
-    signalRHandler = SignalRHandler(rootUrl,debugLogging=False)
+    monitorName = platform.node()
+    signalRHandler = SignalRHandler(rootUrl,monitorName=monitorName,debugLogging=False)
     signalRHandler.onConnection = onConnection
     signalRHandler.hub_connection.on("StartMonitor", startMonitor)
     signalRHandler.hub_connection.on("StopMonitor", stopMonitor)
     signalRHandler.hub_connection.on("ToggleDetection", toggleDetection)
     signalRHandler.hub_connection.on("ResetTracking", resetTracking)
+    signalRHandler.hub_connection.on("Shutdown", shutdown)
+    signalRHandler.hub_connection.on("Reboot", reboot)
     signalRHandler.hub_connection.on("MonitorConfigEdited", configEdited)
-    signalRHandler.hub_connection.on("HorFlip", horFlip)
-    signalRHandler.hub_connection.on("VerFlip", verFlip)
     signalRHandler.start()
     #
     print('Waiting for hub connection ...')
@@ -283,13 +296,25 @@ def main():
         config = getConfig()
         # start
         if config:
+            previewUploader = PreviewUploader(rootUrl,monitorName)
+            messageUploader = MessageUploader(rootUrl,monitorName)
+            detectionUploader = DetectionUploader(rootUrl,config.id)
             proc = CarSpeedMonitor(config)
             start()
 
-    detectionUploader.stop()
-    previewUploader.stop()
-    messageUploader.stop()
+    if detectionUploader:
+        detectionUploader.stop()
+    if previewUploader:
+        previewUploader.stop()
+    if messageUploader:
+        messageUploader.stop()
     signalRHandler.stop()
+    if shutdownOnExit:
+        print('shutting down os ...')
+        os.system('nohup sudo shutdown now')
+    if rebootOnExit:
+        print('rebooting os ...')
+        os.system('nohup sudo reboot')
 
 if __name__ == '__main__':
     main()

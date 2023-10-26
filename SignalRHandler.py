@@ -4,12 +4,12 @@ import logging
 import time
 
 class SignalRHandler:
-    def __init__(self,server_root,onConnection=None,debugLogging=False):
+    def __init__(self,server_root:str,monitorName:str,onConnection=None,debugLogging=False):
         self.onConnection = onConnection
         self.connected = False
         self.server_url=f'{server_root}/NotificationHub'
         builder= HubConnectionBuilder()\
-        .with_url(self.server_url)\
+        .with_url(self.server_url,options={"headers": {"monitor-name": monitorName}})\
         .with_hub_protocol(MessagePackHubProtocol())\
         .with_automatic_reconnect({
             "type": "raw",

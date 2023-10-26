@@ -17,6 +17,8 @@ class CarSpeedConfig(object):
     DEF_CONFIG_FILE = "CarSpeed.json"
     def __init__(self,data=None):
         self.class_name = self.__class__.__name__
+        self.id:int = 0
+        self.name:str = ''
         self.l2r_distance:float = 47
         self.r2l_distance:float = 37
         self.min_speed_image:int = 0
