@@ -89,7 +89,8 @@ class PreviewUploader:
         self.process.start()
     
     def uploadPreview(self,result:CarSpeedMonitorState):
-        if self.uploadQueue.empty():
+        # always send if state idle since only one of these is sent and it needs to get through for the state to change in the gui
+        if self.uploadQueue.empty() or result.state=='IDLE':
             self.uploadQueue.put(result)
         else:
             pass
