@@ -15,12 +15,13 @@ class MonitorArea(object):
 
 class CarSpeedConfig(object):
     DEF_CONFIG_FILE = "CarSpeed.json"
+    M_TO_FT = 3.28084
     def __init__(self,data=None):
         self.class_name = self.__class__.__name__
         self.id:int = 0
         self.name:str = ''
-        self.l2r_distance:float = 47
-        self.r2l_distance:float = 37
+        self.l2r_distance:float = 14 # in m
+        self.r2l_distance:float = 11 # in m
         self.min_speed_image:int = 0
         self.min_speed_save:int = 10
         self.max_speed_save:int = 80
@@ -32,11 +33,13 @@ class CarSpeedConfig(object):
             self.__dict__ = data   
             
     def getL2RFrameWidthFt(self)->float:
-        frame_width_ft = 2*(math.tan(math.radians(self.field_of_view*0.5))*self.l2r_distance)
+        l2r_distance_ft = self.l2r_distance*CarSpeedConfig.M_TO_FT
+        frame_width_ft = 2*(math.tan(math.radians(self.field_of_view*0.5))*l2r_distance_ft)
         return frame_width_ft
     
     def getR2LFrameWidthFt(self)->float:
-        frame_width_ft = 2*(math.tan(math.radians(self.field_of_view*0.5))*self.r2l_distance)
+        r2l_distance_ft = self.r2l_distance*CarSpeedConfig.M_TO_FT
+        frame_width_ft = 2*(math.tan(math.radians(self.field_of_view*0.5))*r2l_distance_ft)
         return frame_width_ft
 
     def toJson(self)->str:

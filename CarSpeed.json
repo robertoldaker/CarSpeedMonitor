@@ -1,8 +1,7 @@
 {
     "class_name": "CarSpeedConfig",
-    "l2r_distance": 25,
-    "r2l_distance": 17,
-    "min_speed_image": 10,
+    "l2r_distance": 7.62,
+    "r2l_distance": 5.18,
     "min_speed_save": 10,
     "max_speed_save": 80,
     "field_of_view": 75,
