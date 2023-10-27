@@ -10,13 +10,25 @@ from CarSpeedConfig import CarSpeedConfig
 
 from SignalRHandler import SignalRHandler
 
+class CarSpeedMonitorState:
+    def __init__(self,state:str,jpg: bytes) -> None:
+        self.state=state
+        self.frameRate=99.99
+        self.detectionEnabled=False
+        self.avgContours=0
+        self.lightLevel=9
+        self.jpg=jpg  
 
 def main():
     def startMonitor(args):
         print('start monitor')
+        state = CarSpeedMonitorState("WAITING",jpg)
+        signalRHandler.uploadPreview(state)
 
     def stopMonitor(args):
         print('stop monitor')
+        state = CarSpeedMonitorState("IDLE",jpg)
+        signalRHandler.uploadPreview(state)
 
     def toggleDetection(args):
         print('toggle detection')
@@ -64,7 +76,9 @@ def main():
     exitEvent = threading.Event()
     monitorName = platform.node()
     print(f'name={monitorName}')    
-    key = None
+    with open('PreviewTest.jpg', 'rb') as file_t:
+        jpg = file_t.read()
+
     signalRHandler = SignalRHandler(rootUrl,monitorName)
     signalRHandler.onConnection = onConnection
     signalRHandler.hub_connection.on("StartMonitor", startMonitor)
@@ -81,6 +95,9 @@ def main():
     config = getConfig()
     if config:
         print(f'configId={config.id}')
+        state = CarSpeedMonitorState("WAITING",jpg)
+        signalRHandler.uploadPreview(state)
+
 
     print('Waiting for exit ...')
     exitEvent.wait()

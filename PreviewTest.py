@@ -25,7 +25,7 @@ def main():
         print("exiting logContinuous")
     
     key = None
-    signalR = SignalRHandler("http://localhost:5174",debugLogging=False)
+    signalR = SignalRHandler("http://localhost:5174","test",debugLogging=False)
     signalR.start()
 
     with open('PreviewTest.jpg', 'rb') as file_t:
