@@ -139,8 +139,8 @@ class ObjectDetector(object):
             if (light > 10):
                 light = 10;
             area =int((1000 * math.sqrt(light - 1)) + 100)
-            #return area
-            return 10000
+            return area
+            #return 10000
         
         def measure_light(hsvImg)->int:
             #Determine luminance level of monitored area 
@@ -295,7 +295,7 @@ class ObjectTracking(object):
         self._monitored_width = ma.lower_right_x - ma.upper_left_x
         # work out ft per pixel in both directions
         self._l2r_ftperpixel = config.getL2RFrameWidthFt() / float(image_width)
-        self._r2l_ftperpixel = config.getL2RFrameWidthFt() / float(image_width)
+        self._r2l_ftperpixel = config.getR2LFrameWidthFt() / float(image_width)
         #
         self.logger = logger
 
@@ -606,6 +606,7 @@ class CarSpeedMonitor(object):
         self.camera.picam.pre_callback = pre_capture_callback
         # min width in pixels of a car
         min_width=5/(self.config.getL2RFrameWidthFt())*self.camera.image_width
+        #min_width=0.5/(self.config.getL2RFrameWidthFt())*self.camera.image_width
         min_area=min_width*min_width
 
         object_detector = ObjectDetector(logger,int(min_area))
@@ -618,7 +619,11 @@ class CarSpeedMonitor(object):
         num_contours:float=0
         st:float = time.monotonic()
         #
-        logger.logMessage("Monitor started")
+        l2r_m_per_pixel = object_tracking._l2r_ftperpixel * CarSpeedConfig.FT_TO_M
+        r2l_m_per_pixel = object_tracking._r2l_ftperpixel * CarSpeedConfig.FT_TO_M
+        startMess = f'Monitor started, m per pixel l2r=[{l2r_m_per_pixel:.6f}], r2l=[{r2l_m_per_pixel:.6f}]'
+        logger.logMessage(startMess)
+        print(startMess)
         while cont:
             # grab the raw NumPy array representing the image 
             image = self.camera.picam.capture_array('main')
@@ -637,7 +642,7 @@ class CarSpeedMonitor(object):
                 #if not show_preview:
                 #    print(f'Frame rate={frame_rate:3.0f}, avg. contours={num_contours:3.0f}      ',end="\r")
 
-            # needed to ensure the images in the preview window get updated
+            # needed to ensure the images in the preview window updated
             if show_preview:
                 key = cv2.waitKey(1) & 0xFF
             # process commands from the command hook

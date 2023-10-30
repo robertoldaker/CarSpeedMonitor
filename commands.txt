@@ -1,5 +1,7 @@
+#?? maybe required on OS lite images (contrary to documentation)
+sudo apt install -y python3-picamera2 --no-install-recommends
 #?? try first one and then second if it doesn;t work
 #pip install opencv-python --break-system-packages
-#sudo apt install python3-opencv
+sudo apt install python3-opencv
 pip install signalrcore --break-system-packages
 pip install pynput --break-system-packages

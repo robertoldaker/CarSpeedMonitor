@@ -16,6 +16,7 @@ class MonitorArea(object):
 class CarSpeedConfig(object):
     DEF_CONFIG_FILE = "CarSpeed.json"
     M_TO_FT = 3.28084
+    FT_TO_M = 0.30490
     def __init__(self,data=None):
         self.class_name = self.__class__.__name__
         self.id:int = 0
