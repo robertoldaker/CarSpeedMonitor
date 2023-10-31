@@ -98,23 +98,95 @@ class DetectionResult(object):
     def getCaptureTime(self)->datetime.datetime:
         return datetime.datetime.fromtimestamp(self.posix_time)
 
+class CarSpeedCamera(object):
+    FRAME_RATE=20
+    def __init__(self,h_flip: bool,v_flip: bool):
+        # same aspect ratio as sensor but heavily reduced for speed of processing
+        self.image_width=640
+        self.image_height=380
+        self.h_flip = h_flip
+        self.v_flip = v_flip
+        self.picam = Picamera2()
+        # sensor_mode[1] is the full-frame fast frame rate camera of the pi camera 3
+        self.config = self.picam.create_preview_configuration(main={"size": (self.image_width, self.image_height),"format": "RGB888"},
+                                                              transform = Transform(hflip=self.h_flip,vflip=self.v_flip),
+                                                              queue=False,
+                                                              raw=self.picam.sensor_modes[1])
+        #
+        self.picam.configure(self.config)
+        self.nightMode = False
+
+
+    def start(self):
+        self.picam.start()
+        # try day mode initially
+        self.set_day_mode()
+
+
+    def update_h_flip(self, h_flip):
+        self.h_flip = self.config['transform'].hflip = h_flip
+        self.picam.stop()
+        self.picam.configure(self.config)
+        self.picam.start()
+
+    def update_v_flip(self, v_flip):
+        self.v_flip = self.config['transform'].vflip = v_flip
+        self.picam.stop()
+        self.picam.configure(self.config)
+        self.picam.start()
+    
+    def set_flip(self,h_flip: bool, v_flip: bool):
+        self.h_flip = self.config['transform'].hflip = h_flip
+        self.v_flip = self.config['transform'].vflip = v_flip
+        self.picam.configure(self.config)
+
+    def stop(self):
+        self.picam.stop()
+    
+    def set_night_mode(self):
+        if self.nightMode:
+            return
+        frameDuration = CarSpeedCamera.getFrameDuration()
+        self.picam.set_controls({"AeEnable": False,'FrameDurationLimits': (frameDuration,frameDuration),"ExposureTime": 30000, "AnalogueGain": 3.0})
+        self.nightMode = True
+    
+    def set_day_mode(self):
+        if not self.nightMode:
+            return
+        frameDuration = CarSpeedCamera.getFrameDuration()
+        self.picam.set_controls({
+                                "AeEnable": True,
+                                "AeMeteringMode": controls.AeMeteringModeEnum.Spot,\
+                                "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.HighQuality,\
+                                'FrameDurationLimits': (frameDuration, frameDuration),\
+                                "AeExposureMode": controls.AeExposureModeEnum.Short})
+        self.nightMode = False
+
+    @staticmethod
+    def getFrameDuration():
+        duration = 1000000/CarSpeedCamera.FRAME_RATE
+        return int(duration)
+
 class ObjectDetector(object):
     
     BLURSIZE = (15,15)
     THRESHOLD = 25
     MIN_SAVE_BUFFER = 2
 
-    def __init__(self, logger:Logger, min_area:int)->None:
+    def __init__(self, logger:Logger, day_min_area:int, night_min_area:int, camera:CarSpeedCamera)->None:
         self.rect=(0,0,0,0)
         self.ncontours=0
         self._base_image = None
         self._lightlevel=-1
         self._last_lightlevel=0
-        self._adjusted_min_area=min_area
+        self._day_min_area=day_min_area
+        self._night_min_area = night_min_area
+        self._adjusted_min_area=day_min_area
         self._adjusted_threshold=0
         self._adjusted_save_buffer=0
         self._lightlevel_time:Union[None,datetime.datetime]=None
         self._first_pass=True
+        self._camera=camera
         self.logger=logger
             
     def update_base_image(self,gray)->None:
@@ -128,25 +200,18 @@ class ObjectDetector(object):
         
         def get_threshold(light: float)->int:
             #Threshold for dark needs to be high so only pick up lights on vehicle
-            #if (light <= 1):
-            #    threshold = 130
-            #elif(light <= 2):
-            #    threshold = 100
-            #elif(light <= 3):
-            #    threshold = 60
-            #else:
-            #    threshold = ObjectDetector.THRESHOLD
-            #return threshold
+            if (light <= 1):
+                threshold = 130
+            elif(light <= 2):
+                threshold = 100
+            elif(light <= 3):
+                threshold = 60
+            else:
+                threshold = ObjectDetector.THRESHOLD
+            return threshold
             # disabled for time being
-            return ObjectDetector.THRESHOLD
-        
-        def get_min_area(light: float)->int:
-            if (light > 10):
-                light = 10;
-            area =int((1000 * math.sqrt(light - 1)) + 100)
-            return area
-            #return 10000
-        
+            #return ObjectDetector.THRESHOLD
+                
         def measure_light(hsvImg)->int:
             #Determine luminance level of monitored area 
             #returns the median from the histogram which contains 0 - 255 levels
@@ -169,17 +234,27 @@ class ObjectDetector(object):
         #Set threshold and min area and save_buffer based on light readings
         self._last_lightlevel = self._lightlevel
         self._lightlevel = my_map(measure_light(hsv),0,256,1,10)
-        ### now fixed
-        #self._adjusted_min_area = get_min_area(self._lightlevel)
+        if ( self._lightlevel < 4 ):
+            self._camera.set_night_mode()
+        else:
+            self._camera.set_day_mode()
         self._adjusted_threshold = get_threshold(self._lightlevel)
         self._adjusted_save_buffer = get_save_buffer(self._lightlevel)
+        #
+        self._adjusted_min_area = self.get_min_area()
         print(f"LIGHT_LEVEL_UPDATE: (level={self._lightlevel}) (min_area={self._adjusted_min_area}) (threshold={self._adjusted_threshold}) (save_buffer={self._adjusted_save_buffer}))")
-        self._lightlevel_time=datetime.datetime.now()
+        self._lightlevel_time=datetime.datetime.now()        
         ###if ( self._last_lightlevel!=self._lightlevel):
         ###    self.update_base_image(gray)
         ### since I can;t get accumulateWeithed to work always refresh the base_image when the lightlevel taken
         self.update_base_image(gray)
 
+    def get_min_area(self)->int:
+        if ( self._camera.nightMode ):
+            return self._night_min_area
+        else:
+            return self._day_min_area
+        
     def reset(self):
         self._first_pass=True
     
@@ -238,51 +313,6 @@ class ObjectDetector(object):
         return found_object
 
 
-class CarSpeedCamera(object):
-    def __init__(self,h_flip: bool,v_flip: bool):
-        # same aspect ratio as sensor but heavily reduced for speed of processing
-        self.image_width=640
-        self.image_height=380
-        self.h_flip = h_flip
-        self.v_flip = v_flip
-        self.picam = Picamera2()
-        # sensor_mode[1] is the full-frame fast frame rate camera of the pi camera 3
-        self.config = self.picam.create_preview_configuration(main={"size": (self.image_width, self.image_height),"format": "RGB888"},
-                                                              transform = Transform(hflip=self.h_flip,vflip=self.v_flip),
-                                                              queue=False,
-                                                              raw=self.picam.sensor_modes[1])
-        #
-        self.picam.configure(self.config)
-
-
-    def start(self):
-        self.picam.start()
-        # controls
-        self.picam.set_controls({"AeMeteringMode": controls.AeMeteringModeEnum.Spot,\
-                                "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,\
-                                'FrameDurationLimits': (50000, 50000),\
-                                "AeExposureMode": controls.AeExposureModeEnum.Short})
-
-
-    def update_h_flip(self, h_flip):
-        self.h_flip = self.config['transform'].hflip = h_flip
-        self.picam.stop()
-        self.picam.configure(self.config)
-        self.picam.start()
-
-    def update_v_flip(self, v_flip):
-        self.v_flip = self.config['transform'].vflip = v_flip
-        self.picam.stop()
-        self.picam.configure(self.config)
-        self.picam.start()
-    
-    def set_flip(self,h_flip: bool, v_flip: bool):
-        self.h_flip = self.config['transform'].hflip = h_flip
-        self.v_flip = self.config['transform'].vflip = v_flip
-        self.picam.configure(self.config)
-
-    def stop(self):
-        self.picam.stop()
         
 class ObjectTracking(object):
 
@@ -598,6 +628,13 @@ class CarSpeedMonitor(object):
                 # reset 
                 if char == "r":
                     object_tracking.reset()
+        
+        def get_pix_area(widthFt: float):
+            width=widthFt/(self.config.getL2RFrameWidthFt())*self.camera.image_width
+            area=width*width
+            return area
+
+
 
         #
         logger = Logger(logger_hook)
@@ -638,11 +675,11 @@ class CarSpeedMonitor(object):
         
         self.camera.picam.pre_callback = pre_capture_callback
         # min width in pixels of a car
-        min_width=5/(self.config.getL2RFrameWidthFt())*self.camera.image_width
-        #min_width=0.5/(self.config.getL2RFrameWidthFt())*self.camera.image_width
-        min_area=min_width*min_width
+        day_min_area=get_pix_area(5)
+        # min width in pixels of a car headlamp
+        night_min_area=get_pix_area(1)
 
-        object_detector = ObjectDetector(logger,int(min_area))
+        object_detector = ObjectDetector(logger,int(day_min_area),int(night_min_area),self.camera)
         object_tracking = ObjectTracking(logger,self.config,self.camera.image_width,object_detector,moving_object_detected)
         
         frame_rate:float=0
