@@ -1,9 +1,12 @@
 from typing import Callable, List, Tuple, Union
 
+import psutil
+
 from CarSpeedConfig import CarSpeedConfig
 # import the necessary packages
 from picamera2 import Picamera2
 from libcamera import Transform
+from libcamera import controls
 from enum import IntEnum
 import time
 import math
@@ -125,15 +128,17 @@ class ObjectDetector(object):
         
         def get_threshold(light: float)->int:
             #Threshold for dark needs to be high so only pick up lights on vehicle
-            if (light <= 1):
-                threshold = 130
-            elif(light <= 2):
-                threshold = 100
-            elif(light <= 3):
-                threshold = 60
-            else:
-                threshold = ObjectDetector.THRESHOLD
-            return threshold
+            #if (light <= 1):
+            #    threshold = 130
+            #elif(light <= 2):
+            #    threshold = 100
+            #elif(light <= 3):
+            #    threshold = 60
+            #else:
+            #    threshold = ObjectDetector.THRESHOLD
+            #return threshold
+            # disabled for time being
+            return ObjectDetector.THRESHOLD
         
         def get_min_area(light: float)->int:
             if (light > 10):
@@ -249,8 +254,15 @@ class CarSpeedCamera(object):
         #
         self.picam.configure(self.config)
 
+
     def start(self):
         self.picam.start()
+        # controls
+        self.picam.set_controls({"AeMeteringMode": controls.AeMeteringModeEnum.Spot,\
+                                "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.Off,\
+                                'FrameDurationLimits': (50000, 50000),\
+                                "AeExposureMode": controls.AeExposureModeEnum.Short})
+
 
     def update_h_flip(self, h_flip):
         self.h_flip = self.config['transform'].hflip = h_flip
@@ -455,13 +467,24 @@ class ObjectTracking(object):
         return ObjectTracking.DETECTION_STATE_TEXT[self.state]
     
 class CarSpeedMonitorState:
-    def __init__(self,image,state:str, frameRate:float, detectionEnabled: bool, avgContours: int, lightLevel: float) -> None:
+    def __init__(self,image,\
+                 state:str,\
+                frameRate:float,\
+                detectionEnabled: bool,\
+                avgContours: int,\
+                lightLevel: float,\
+                exposureTime: int,\
+                analogeGain: float,\
+                cpus: List[float]) -> None:
         self.image=image.copy()
         self.state=state
         self.frameRate=frameRate
         self.detectionEnabled=detectionEnabled
         self.avgContours=avgContours
         self.lightLevel=lightLevel
+        self.exposureTime=exposureTime
+        self.analogueGain=analogeGain
+        self.cpus=cpus
   
     def generateJpg(self):
         (result,jpg) = cv2.imencode('.jpg', self.image)
@@ -549,7 +572,17 @@ class CarSpeedMonitor(object):
         def run_preview_hook():
             if preview_hook!=None:
                 stateStr = object_tracking.getStateStr() if cont else "IDLE"
-                state=CarSpeedMonitorState(image, stateStr ,frame_rate,detection_enabled,int(num_contours),object_detector._lightlevel)
+                exposureTime = metadata["ExposureTime"] if metadata else 0
+                analogueGain = metadata["AnalogueGain"] if metadata else 0
+                state=CarSpeedMonitorState(image,\
+                                            stateStr,\
+                                            frame_rate,\
+                                            detection_enabled,\
+                                            int(num_contours),\
+                                            object_detector._lightlevel,\
+                                            exposureTime,\
+                                            analogueGain,
+                                            cpus)
                 preview_hook(state)
 
         def on_key_press(key):
@@ -623,6 +656,8 @@ class CarSpeedMonitor(object):
         r2l_m_per_pixel = object_tracking._r2l_ftperpixel * CarSpeedConfig.FT_TO_M
         startMess = f'Monitor started, m per pixel l2r=[{l2r_m_per_pixel:.6f}], r2l=[{r2l_m_per_pixel:.6f}]'
         logger.logMessage(startMess)
+        cpus=psutil.cpu_percent(interval=None,percpu=True)
+        metadata = self.camera.picam.capture_metadata()
         print(startMess)
         while cont:
             # grab the raw NumPy array representing the image 
@@ -633,14 +668,17 @@ class CarSpeedMonitor(object):
 
             frame_count+=1
             total_contours+=object_detector.ncontours
-            if frame_count % 50 == 0:
+            if frame_count % 20 == 0:
                 ft = time.monotonic()
-                frame_rate=50/(ft-st)
-                num_contours=total_contours/50
+                frame_rate=20/(ft-st)
+                num_contours=total_contours/20
                 total_contours=0
                 st=time.monotonic()
                 #if not show_preview:
-                #    print(f'Frame rate={frame_rate:3.0f}, avg. contours={num_contours:3.0f}      ',end="\r")
+                metadata = self.camera.picam.capture_metadata()
+                cpus=psutil.cpu_percent(interval=None,percpu=True)
+                cpus.sort(reverse=True)
+                #print(f'Frame rate={frame_rate:3.0f}, avg. contours={num_contours:3.0f}, exp={metadata["ExposureTime"]}, gain=[{metadata["AnalogueGain"]}]      ',end="\r")
 
             # needed to ensure the images in the preview window updated
             if show_preview:

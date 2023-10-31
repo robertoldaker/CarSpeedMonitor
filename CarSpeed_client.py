@@ -253,7 +253,8 @@ def main():
             hubConnectionEvent.set()
 
     # set up SIGINT handler (for ctrl-c) so we can exit gracefully
-    signal.signal(signal.SIGINT, signal_handler)
+    # can't get this to work if there is a python error so diasabled for time being
+    #signal.signal(signal.SIGINT, signal_handler)
     
     ap = argparse.ArgumentParser(description="Car speed monitor client")
     ap.add_argument("--server","-s", default="production", help="Server to use")
