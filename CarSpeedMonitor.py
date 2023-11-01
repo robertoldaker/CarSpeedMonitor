@@ -98,8 +98,14 @@ class DetectionResult(object):
     def getCaptureTime(self)->datetime.datetime:
         return datetime.datetime.fromtimestamp(self.posix_time)
 
+
+class CameraMode(IntEnum):
+    NOT_SET=0
+    DAY=1
+    NIGHT=2
+
 class CarSpeedCamera(object):
-    FRAME_RATE=20
+    FRAME_RATE=30
     def __init__(self,h_flip: bool,v_flip: bool):
         # same aspect ratio as sensor but heavily reduced for speed of processing
         self.image_width=640
@@ -114,14 +120,11 @@ class CarSpeedCamera(object):
                                                               raw=self.picam.sensor_modes[1])
         #
         self.picam.configure(self.config)
-        self.nightMode = False
-
+        self.mode = CameraMode.NOT_SET
 
     def start(self):
         self.picam.start()
-        # try day mode initially
         self.set_day_mode()
-
 
     def update_h_flip(self, h_flip):
         self.h_flip = self.config['transform'].hflip = h_flip
@@ -144,23 +147,24 @@ class CarSpeedCamera(object):
         self.picam.stop()
     
     def set_night_mode(self):
-        if self.nightMode:
+        if self.mode==CameraMode.NIGHT:
             return
         frameDuration = CarSpeedCamera.getFrameDuration()
         self.picam.set_controls({"AeEnable": False,'FrameDurationLimits': (frameDuration,frameDuration),"ExposureTime": 30000, "AnalogueGain": 3.0})
-        self.nightMode = True
+        self.mode=CameraMode.NIGHT
     
     def set_day_mode(self):
-        if not self.nightMode:
+        if self.mode==CameraMode.DAY:
             return
         frameDuration = CarSpeedCamera.getFrameDuration()
+        print(f'set_day_mode frameDuration {frameDuration}')
         self.picam.set_controls({
                                 "AeEnable": True,
                                 "AeMeteringMode": controls.AeMeteringModeEnum.Spot,\
                                 "NoiseReductionMode": controls.draft.NoiseReductionModeEnum.HighQuality,\
                                 'FrameDurationLimits': (frameDuration, frameDuration),\
                                 "AeExposureMode": controls.AeExposureModeEnum.Short})
-        self.nightMode = False
+        self.mode = CameraMode.DAY
 
     @staticmethod
     def getFrameDuration():
@@ -250,7 +254,7 @@ class ObjectDetector(object):
         self.update_base_image(gray)
 
     def get_min_area(self)->int:
-        if ( self._camera.nightMode ):
+        if ( self._camera.mode==CameraMode.NIGHT ):
             return self._night_min_area
         else:
             return self._day_min_area
