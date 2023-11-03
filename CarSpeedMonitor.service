@@ -1,0 +1,12 @@
+[Unit]
+Description=CarSpeedMonitor python car speed detector running on a raspberry pi
+
+[Service]
+WorkingDirectory=/home/rob
+ExecStart=/usr/bin/python CarSpeed_client.py
+Restart=no
+SyslogIdentifier=CarSpeedMonitor
+User=rob
+
+[Install]
+WantedBy=default.target

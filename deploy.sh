@@ -1,3 +1,4 @@
+# copy over python files to detination
 dest=$1
 if [ "$dest" = "-p" ]; then
 	destServ="rob@speedy-prod.local"
@@ -16,3 +17,9 @@ do
     cmd=$cmd"put $file\n"
 done
 echo -e "$cmd" | sftp $destServ
+
+# restart service
+if [ "$dest" = "-p" ]; then
+    ssh $destSrv 'sudo systemctl restart CarSpeedMonitor'
+fi
+
